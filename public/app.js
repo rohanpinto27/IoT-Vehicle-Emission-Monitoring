@@ -1,24 +1,19 @@
-// ==========================================================================
-// CityFleet IoT Pollution Monitoring — Real-Time Frontend Controller
-// Pure Native Client (Zero External SDK Blocking / Compatible with Brave & All Browsers)
-// ==========================================================================
+// ==============================================================================
+// CityFleet IoT Pollution Monitoring — Frontend Controller (Module)
+// Native browser implementation (Zero SDK dependencies, Brave/Privacy compatible)
+// ==============================================================================
 
-const RTDB_BASE_URL = "https://pollutionmonitoring-4156-69176-default-rtdb.firebaseio.com";
+import {
+    RTDB_BASE_URL,
+    THRESHOLDS,
+    DEMO_LOCATION,
+    MAP_CONFIG,
+    POLLING_INTERVAL_MS,
+    STALE_THRESHOLD_MS,
+    DEMO_FIXTURE
+} from './config.js';
 
-const THRESHOLDS = {
-    NORMAL: 1000,
-    MODERATE: 2000,
-    CRITICAL: 2500
-};
-
-const MAP_CONFIG = {
-    center: [12.9716, 77.5946],
-    zoom: 13,
-    tileLayer: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
-};
-
-// Global State
+// Global Application State
 let map = null;
 let vehicleMarkers = {};
 let heatLayer = null;
@@ -27,10 +22,12 @@ let chart = null;
 let selectedVehicle = "KA01-5522";
 let fleetData = {};
 let alertsData = {};
+let isDemoSimulation = false;
 let heatmapVisible = true;
 let audioAlertsEnabled = true;
 let activeChartMetric = "co2"; // 'co2' | 'temp' | 'humidity'
 let lastPacketTimestamp = Date.now();
+const processedAlertIds = new Set();
 
 const chartHistory = {
     labels: [],
@@ -39,19 +36,19 @@ const chartHistory = {
     humidity: []
 };
 
-/* ---------------- INITIALIZATION ---------------- */
+/* -------------------------------------------------------------------------- */
+/* Initialization                                                             */
+/* -------------------------------------------------------------------------- */
 function initDashboard() {
-    console.log("Initializing CityFleet Dashboard...");
+    console.log("[CityFleet] Initializing IoT Pollution Monitoring Dashboard...");
     initLeafletMap();
     initChart();
     setupUIControls();
     startHeartbeatTimer();
 
-    // 1. Immediate fetch
+    // Initial fetch, then periodic polling
     fetchLiveData();
-
-    // 2. High-frequency 1.5s real-time polling loop
-    setInterval(fetchLiveData, 1500);
+    setInterval(fetchLiveData, POLLING_INTERVAL_MS);
 }
 
 if (document.readyState === "loading") {
@@ -60,54 +57,87 @@ if (document.readyState === "loading") {
     initDashboard();
 }
 
-/* ---------------- DATA FETCHING ---------------- */
+/* -------------------------------------------------------------------------- */
+/* Data Fetching & Sync Engine                                                */
+/* -------------------------------------------------------------------------- */
 async function fetchLiveData() {
+    // If user explicitly toggled offline demo mode
+    if (isDemoSimulation) {
+        applyTelemetryPayload(DEMO_FIXTURE.vehicles, DEMO_FIXTURE.alerts, true);
+        return;
+    }
+
     try {
-        // Parallel fetch for optimal performance
         const [vehiclesRes, alertsRes] = await Promise.all([
             fetch(`${RTDB_BASE_URL}/vehicles.json?t=${Date.now()}`),
             fetch(`${RTDB_BASE_URL}/alerts.json?t=${Date.now()}`)
         ]);
 
-        if (vehiclesRes.ok) {
-            const vData = await vehiclesRes.json();
-            if (vData && typeof vData === 'object') {
-                fleetData = vData;
-                lastPacketTimestamp = Date.now();
-
-                renderFleetList(vData);
-                renderKpis(vData);
-                renderMapTelemetry(vData);
-
-                if (!selectedVehicle || !vData[selectedVehicle]) {
-                    selectedVehicle = Object.keys(vData)[0] || "KA01-5522";
-                }
-
-                if (vData[selectedVehicle]) {
-                    renderSelectedVehicleTelemetry(vData[selectedVehicle], selectedVehicle);
-                    pushChartTelemetry(vData[selectedVehicle]);
-                }
-            }
+        if (vehiclesRes.status === 401 || !vehiclesRes.ok) {
+            console.warn(`[Firebase] HTTP ${vehiclesRes.status} Unauthorized / Access Restricted. Utilizing Demo Fixture.`);
+            showSystemBanner("warning", "Firebase Realtime Database access is restricted (HTTP 401). Switched to Alva's Institute Demo Fixture.");
+            applyTelemetryPayload(DEMO_FIXTURE.vehicles, DEMO_FIXTURE.alerts, true);
+            return;
         }
 
-        if (alertsRes.ok) {
-            const aData = await alertsRes.json();
-            if (aData && typeof aData === 'object') {
-                alertsData = aData;
-                renderAlerts(aData);
-            }
+        const vData = await vehiclesRes.json();
+        const aData = alertsRes.ok ? await alertsRes.json() : {};
+
+        if (vData && typeof vData === 'object' && Object.keys(vData).length > 0) {
+            showSystemBanner("live", "Connected to Live Firebase Cloud Stream. Receiving hardware telemetry.");
+            applyTelemetryPayload(vData, aData || {}, false);
+        } else {
+            // Empty database
+            showSystemBanner("info", "Connected to Firebase, but no active vehicle telemetry found. Loaded Demo Fixture.");
+            applyTelemetryPayload(DEMO_FIXTURE.vehicles, DEMO_FIXTURE.alerts, true);
         }
     } catch (err) {
-        console.warn("Live telemetry fetch warning:", err);
+        console.warn("[CityFleet] Network/CORS error reaching Firebase:", err);
+        showSystemBanner("warning", "Unable to reach Firebase cloud. Operating in Alva's Institute Demo Simulation mode.");
+        applyTelemetryPayload(DEMO_FIXTURE.vehicles, DEMO_FIXTURE.alerts, true);
     }
 }
 
-/* ---------------- LEAFLET MAP ---------------- */
+function applyTelemetryPayload(vehicles, alerts, isSimulated) {
+    fleetData = vehicles || {};
+    alertsData = alerts || {};
+    lastPacketTimestamp = Date.now();
+
+    renderFleetList(fleetData);
+    renderKpis(fleetData);
+    renderMapTelemetry(fleetData);
+
+    if (!selectedVehicle || !fleetData[selectedVehicle]) {
+        selectedVehicle = Object.keys(fleetData)[0] || "KA01-5522";
+    }
+
+    if (fleetData[selectedVehicle]) {
+        renderSelectedVehicleTelemetry(fleetData[selectedVehicle], selectedVehicle);
+        pushChartTelemetry(fleetData[selectedVehicle]);
+    }
+
+    renderAlerts(alertsData);
+}
+
+/* -------------------------------------------------------------------------- */
+/* UI Banner Manager                                                          */
+/* -------------------------------------------------------------------------- */
+function showSystemBanner(type, message) {
+    const banner = document.getElementById("systemBanner");
+    const msgElem = document.getElementById("systemBannerText");
+    if (!banner || !msgElem) return;
+
+    banner.className = `system-banner system-banner-${type}`;
+    msgElem.innerHTML = message;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Leaflet Map & Heatmap Controller                                           */
+/* -------------------------------------------------------------------------- */
 function initLeafletMap() {
     try {
         if (typeof L === "undefined") {
-            console.warn("Leaflet script not yet ready, retrying in 400ms...");
-            setTimeout(initLeafletMap, 400);
+            setTimeout(initLeafletMap, 300);
             return;
         }
 
@@ -115,8 +145,8 @@ function initLeafletMap() {
         if (!mapElem || map) return;
 
         map = L.map("map", {
-            center: MAP_CONFIG.center,
-            zoom: MAP_CONFIG.zoom,
+            center: DEMO_LOCATION.center,
+            zoom: DEMO_LOCATION.zoom,
             zoomControl: true
         });
 
@@ -127,27 +157,104 @@ function initLeafletMap() {
 
         if (typeof L.heatLayer === "function") {
             heatLayer = L.heatLayer([], {
-                radius: 30,
-                blur: 20,
+                radius: 32,
+                blur: 22,
                 maxZoom: 17,
                 gradient: { 0.2: '#10b981', 0.5: '#f59e0b', 0.8: '#ef4444' }
             }).addTo(map);
         }
 
-        // Trigger map resize calculation
-        setTimeout(() => map && map.invalidateSize(), 500);
-
+        setTimeout(() => map && map.invalidateSize(), 400);
     } catch (err) {
-        console.error("Map initialization error:", err);
+        console.error("[Map] Init error:", err);
     }
 }
 
-/* ---------------- CHART.JS ---------------- */
+function renderMapTelemetry(vehicles) {
+    if (!map) return;
+
+    const heatPoints = [];
+
+    Object.keys(vehicles).forEach(id => {
+        const v = vehicles[id];
+        if (!v.latitude || !v.longitude) return;
+
+        const lat = Number(v.latitude);
+        const lng = Number(v.longitude);
+
+        // Discard invalid (0,0) coordinates
+        if (isNaN(lat) || isNaN(lng) || (lat === 0 && lng === 0)) return;
+
+        const ppm = v.co2_ppm || 400;
+        const intensity = Math.min(Math.max(ppm / 2500, 0.2), 1.0);
+        heatPoints.push([lat, lng, intensity]);
+
+        const aqi = getAqiStatus(ppm);
+        const isLiveGps = (v.gps_valid === true && v.location_source === "gps");
+        const locationTag = isLiveGps 
+            ? `<span class="gps-pill gps-live">📡 Live GPS Fix</span>` 
+            : `<span class="gps-pill gps-demo">🏢 Demo Fallback (AIET Mijar)</span>`;
+
+        const popupContent = `
+            <div style="font-family:'Plus Jakarta Sans',sans-serif; min-width:180px; padding:4px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                    <strong style="font-size:14px; color:#0f172a;">🚚 ${id}</strong>
+                    <span class="status-badge status-${aqi.class}">${aqi.label}</span>
+                </div>
+                <div style="font-size:12px; color:#475569; line-height:1.6;">
+                    <strong>CO₂ Air Quality:</strong> ${ppm} PPM<br>
+                    <strong>Temperature:</strong> ${v.temperature != null ? Number(v.temperature).toFixed(1) + '°C' : '--'}<br>
+                    <strong>Humidity:</strong> ${v.humidity != null ? Math.round(v.humidity) + '%' : '--'}<br>
+                    <strong>GPS Source:</strong> ${locationTag}
+                </div>
+            </div>
+        `;
+
+        if (!vehicleMarkers[id]) {
+            const customIcon = L.divIcon({
+                className: "custom-map-icon",
+                html: `<div class="leaflet-vehicle-marker" id="marker-${id}"></div>`,
+                iconSize: [24, 24],
+                iconAnchor: [12, 12]
+            });
+
+            const marker = L.marker([lat, lng], { icon: customIcon }).addTo(map);
+            marker.bindPopup(popupContent);
+            marker.on('click', () => {
+                selectedVehicle = id;
+                renderFleetList(vehicles);
+                renderSelectedVehicleTelemetry(v, id);
+            });
+
+            vehicleMarkers[id] = marker;
+        } else {
+            vehicleMarkers[id].setLatLng([lat, lng]);
+            const popup = vehicleMarkers[id].getPopup();
+            if (popup) popup.setContent(popupContent);
+        }
+    });
+
+    if (heatLayer) {
+        heatLayer.setLatLngs(heatPoints);
+    }
+}
+
+function centerVehicleOnMap(v) {
+    if (!map || !v || !v.latitude || !v.longitude) return;
+    const lat = Number(v.latitude);
+    const lng = Number(v.longitude);
+    if (!isNaN(lat) && !isNaN(lng)) {
+        map.flyTo([lat, lng], 15, { animate: true, duration: 0.8 });
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Chart.js Time-Series Engine                                                */
+/* -------------------------------------------------------------------------- */
 function initChart() {
     try {
         if (typeof Chart === "undefined") {
-            console.warn("Chart.js script not yet ready, retrying in 400ms...");
-            setTimeout(initChart, 400);
+            setTimeout(initChart, 300);
             return;
         }
 
@@ -178,7 +285,7 @@ function initChart() {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                animation: { duration: 200 },
+                animation: { duration: 250 },
                 interaction: { intersect: false, mode: 'index' },
                 scales: {
                     y: {
@@ -196,7 +303,7 @@ function initChart() {
                             color: "#64748b",
                             maxRotation: 0,
                             autoSkip: true,
-                            maxTicksLimit: 8
+                            maxTicksLimit: 7
                         }
                     }
                 },
@@ -213,146 +320,24 @@ function initChart() {
             }
         });
     } catch (err) {
-        console.error("Chart initialization error:", err);
+        console.error("[Chart] Init error:", err);
     }
 }
 
-/* ---------------- RENDER TELEMETRY & KPIS ---------------- */
-function renderFleetList(vehicles) {
-    const list = document.getElementById("vehicleList");
-    if (!list) return;
-    list.innerHTML = "";
-
-    Object.keys(vehicles).forEach(id => {
-        const v = vehicles[id];
-        const status = getAqiStatus(v.co2_ppm || 0);
-
-        const li = document.createElement("li");
-        li.className = `vehicle-item ${id === selectedVehicle ? 'active' : ''}`;
-        li.innerHTML = `
-            <div>
-                <div class="vehicle-id">${id}</div>
-                <div style="font-size:11px; color:#64748b;">${v.co2_ppm || 0} PPM &bull; ${v.temperature != null ? Number(v.temperature).toFixed(1) + '°C' : '--'}</div>
-            </div>
-            <span class="vehicle-status-badge status-${status.class}">${status.label}</span>
-        `;
-
-        li.onclick = () => {
-            selectedVehicle = id;
-            renderFleetList(vehicles);
-            renderSelectedVehicleTelemetry(vehicles[id], id);
-            centerVehicleOnMap(vehicles[id]);
-        };
-
-        list.appendChild(li);
-    });
-
-    const fleetBadge = document.getElementById("fleetBadge");
-    if (fleetBadge) {
-        fleetBadge.textContent = `${Object.keys(vehicles).length} Active`;
-    }
-}
-
-function renderKpis(vehicles) {
-    const ids = Object.keys(vehicles);
-    const count = ids.length;
-    
-    const countElem = document.getElementById("vehicleCount");
-    if (countElem) countElem.textContent = count;
-
-    let totalPpm = 0;
-    let validPpmCount = 0;
-    let latestTemp = null;
-    let latestHumidity = null;
-
-    ids.forEach(id => {
-        const v = vehicles[id];
-        if (v.co2_ppm) {
-            totalPpm += Number(v.co2_ppm);
-            validPpmCount++;
-        }
-        if (v.temperature != null) latestTemp = v.temperature;
-        if (v.humidity != null) latestHumidity = v.humidity;
-    });
-
-    const avgPpm = validPpmCount > 0 ? Math.round(totalPpm / validPpmCount) : 0;
-    const avgElem = document.getElementById("avgEmission");
-    if (avgElem) avgElem.innerHTML = `${avgPpm} <small>PPM</small>`;
-
-    const avgStatus = getAqiStatus(avgPpm);
-    const statusSub = document.getElementById("avgEmissionStatus");
-    if (statusSub) {
-        statusSub.textContent = `Fleet Status: ${avgStatus.label}`;
-        statusSub.style.color = avgStatus.color;
-    }
-
-    if (latestTemp != null) {
-        const kpiTemp = document.getElementById("kpiTemp");
-        if (kpiTemp) kpiTemp.innerHTML = `${Number(latestTemp).toFixed(1)} <small>°C</small>`;
-    }
-    if (latestHumidity != null) {
-        const kpiHumidity = document.getElementById("kpiHumidity");
-        if (kpiHumidity) kpiHumidity.innerHTML = `${Math.round(latestHumidity)} <small>%</small>`;
-    }
-}
-
-function renderSelectedVehicleTelemetry(v, id) {
-    const ppm = v.co2_ppm || 0;
-    const aqi = getAqiStatus(ppm);
-
-    const vehNum = document.getElementById("vehicleNumber");
-    if (vehNum) vehNum.textContent = id;
-
-    const co2Lvl = document.getElementById("co2Level");
-    if (co2Lvl) co2Lvl.textContent = ppm;
-
-    const emPerKm = document.getElementById("emissionPerKm");
-    if (emPerKm) emPerKm.innerHTML = `${v.emission_per_km || (ppm / 200).toFixed(2)} <small>g/km</small>`;
-
-    const totEm = document.getElementById("totalEmission");
-    if (totEm) totEm.innerHTML = `${v.total_emission || 0} <small>g</small>`;
-
-    const nodeT = document.getElementById("nodeTemp");
-    if (nodeT) nodeT.innerHTML = `${v.temperature != null ? Number(v.temperature).toFixed(1) : '--'} <small>°C</small>`;
-
-    const nodeH = document.getElementById("nodeHumidity");
-    if (nodeH) nodeH.innerHTML = `${v.humidity != null ? Math.round(v.humidity) : '--'} <small>%</small>`;
-
-    const lat = v.latitude ? Number(v.latitude).toFixed(4) : "12.9716";
-    const lng = v.longitude ? Number(v.longitude).toFixed(4) : "77.5946";
-    const gpsCoord = document.getElementById("gpsCoordinates");
-    if (gpsCoord) gpsCoord.textContent = `Lat: ${lat} | Lng: ${lng}`;
-
-    const statusBadge = document.getElementById("vehicleStatusBadge");
-    if (statusBadge) {
-        statusBadge.textContent = aqi.label;
-        statusBadge.className = `status-tag status-${aqi.class}`;
-    }
-
-    const aqiCategory = document.getElementById("aqiCategory");
-    if (aqiCategory) {
-        aqiCategory.textContent = aqi.label;
-        aqiCategory.className = `gauge-quality status-${aqi.class}`;
-    }
-
-    const percent = Math.min(Math.max((ppm / 2800) * 280, 20), 280);
-    const gauge = document.getElementById("gaugeCircle");
-    if (gauge) {
-        gauge.style.background = `conic-gradient(${aqi.color} 0deg ${percent}deg, #e2e8f0 ${percent}deg 360deg)`;
-    }
-}
-
-/* ---------------- CHART UPDATER ---------------- */
 function pushChartTelemetry(v) {
-    if (!v) return;
+    if (!v || !chart) return;
 
-    const timeLabel = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    
+    let timeLabel = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    if (v.timestamp && typeof v.timestamp === "number" && v.timestamp > 1700000000000) {
+        timeLabel = new Date(v.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
     chartHistory.labels.push(timeLabel);
     chartHistory.co2.push(v.co2_ppm || 0);
-    chartHistory.temp.push(v.temperature != null ? Number(v.temperature) : 25);
-    chartHistory.humidity.push(v.humidity != null ? Number(v.humidity) : 50);
+    chartHistory.temp.push(v.temperature != null ? Number(v.temperature) : null);
+    chartHistory.humidity.push(v.humidity != null ? Math.round(Number(v.humidity)) : null);
 
+    // Limit rolling history to 25 items to prevent unbounded memory growth
     if (chartHistory.labels.length > 25) {
         chartHistory.labels.shift();
         chartHistory.co2.shift();
@@ -388,158 +373,273 @@ function updateChartDisplay() {
     chart.update();
 }
 
-/* ---------------- MAP TELEMETRY & HEATMAP ---------------- */
-function renderMapTelemetry(vehicles) {
-    if (!map) return;
+/* -------------------------------------------------------------------------- */
+/* Fleet & Telemetry Rendering                                                */
+/* -------------------------------------------------------------------------- */
+function renderFleetList(vehicles) {
+    const list = document.getElementById("vehicleList");
+    if (!list) return;
+    list.innerHTML = "";
 
-    const heatPoints = [];
+    const ids = Object.keys(vehicles);
+    let onlineCount = 0;
 
-    Object.keys(vehicles).forEach(id => {
+    ids.forEach(id => {
         const v = vehicles[id];
-        if (!v.latitude || !v.longitude) return;
+        const aqi = getAqiStatus(v.co2_ppm || 0);
+        const freshness = getDeviceFreshness(v);
+        if (freshness.state === "live") onlineCount++;
 
-        const lat = Number(v.latitude);
-        const lng = Number(v.longitude);
-        const ppm = v.co2_ppm || 400;
+        const isLiveGps = (v.gps_valid === true && v.location_source === "gps");
+        const gpsBadge = isLiveGps
+            ? `<span class="gps-pill gps-live" style="font-size:10px; padding:1px 6px;">GPS</span>`
+            : `<span class="gps-pill gps-demo" style="font-size:10px; padding:1px 6px;">DEMO</span>`;
 
-        const intensity = Math.min(ppm / 2500, 1.0);
-        heatPoints.push([lat, lng, intensity]);
-
-        if (!vehicleMarkers[id]) {
-            const customIcon = L.divIcon({
-                className: "custom-map-icon",
-                html: `<div class="leaflet-vehicle-marker" id="marker-${id}"></div>`,
-                iconSize: [24, 24],
-                iconAnchor: [12, 12]
-            });
-
-            const marker = L.marker([lat, lng], { icon: customIcon }).addTo(map);
-            marker.bindPopup(`
-                <div style="font-family:'Plus Jakarta Sans',sans-serif; padding:4px;">
-                    <strong style="font-size:14px;">🚚 ${id}</strong><br>
-                    <strong>CO₂:</strong> ${ppm} PPM<br>
-                    <strong>Temp:</strong> ${v.temperature != null ? Number(v.temperature).toFixed(1) + '°C' : '--'}<br>
-                    <strong>Humidity:</strong> ${v.humidity != null ? Math.round(v.humidity) + '%' : '--'}<br>
-                    <strong>Status:</strong> ${v.status || 'Normal'}
+        const li = document.createElement("li");
+        li.className = `vehicle-item ${id === selectedVehicle ? 'active' : ''}`;
+        li.innerHTML = `
+            <div>
+                <div style="display:flex; align-items:center; gap:6px;">
+                    <span class="v-id">${id}</span>
+                    ${gpsBadge}
                 </div>
-            `);
+                <div class="v-sub">${v.co2_ppm || 0} PPM &bull; ${v.temperature != null ? Number(v.temperature).toFixed(1) + '°C' : '--'}</div>
+            </div>
+            <div style="text-align:right;">
+                <span class="status-badge status-${aqi.class}">${aqi.label}</span>
+                <div style="font-size:10px; color:#64748b; margin-top:3px;">${freshness.label}</div>
+            </div>
+        `;
 
-            marker.on('click', () => {
-                selectedVehicle = id;
-                renderFleetList(vehicles);
-                renderSelectedVehicleTelemetry(v, id);
-            });
+        li.onclick = () => {
+            selectedVehicle = id;
+            renderFleetList(vehicles);
+            renderSelectedVehicleTelemetry(vehicles[id], id);
+            centerVehicleOnMap(vehicles[id]);
+        };
 
-            vehicleMarkers[id] = marker;
-        } else {
-            vehicleMarkers[id].setLatLng([lat, lng]);
-            const popup = vehicleMarkers[id].getPopup();
-            if (popup) {
-                popup.setContent(`
-                    <div style="font-family:'Plus Jakarta Sans',sans-serif; padding:4px;">
-                        <strong style="font-size:14px;">🚚 ${id}</strong><br>
-                        <strong>CO₂:</strong> ${ppm} PPM<br>
-                        <strong>Temp:</strong> ${v.temperature != null ? Number(v.temperature).toFixed(1) + '°C' : '--'}<br>
-                        <strong>Humidity:</strong> ${v.humidity != null ? Math.round(v.humidity) + '%' : '--'}<br>
-                        <strong>Status:</strong> ${v.status || 'Normal'}
-                    </div>
-                `);
-            }
-        }
+        list.appendChild(li);
     });
 
-    if (heatLayer) {
-        heatLayer.setLatLngs(heatPoints);
+    const fleetBadge = document.getElementById("fleetBadge");
+    if (fleetBadge) {
+        fleetBadge.textContent = `${onlineCount} / ${ids.length} Online`;
     }
 }
 
-function centerVehicleOnMap(v) {
-    if (!map || !v || !v.latitude || !v.longitude) return;
-    map.flyTo([Number(v.latitude), Number(v.longitude)], 15, { animate: true, duration: 1 });
+function renderKpis(vehicles) {
+    const ids = Object.keys(vehicles);
+    const count = ids.length;
+
+    const countElem = document.getElementById("vehicleCount");
+    if (countElem) countElem.textContent = count;
+
+    let totalPpm = 0;
+    let validPpmCount = 0;
+    let latestTemp = null;
+    let latestHumidity = null;
+
+    ids.forEach(id => {
+        const v = vehicles[id];
+        if (v.co2_ppm != null) {
+            totalPpm += Number(v.co2_ppm);
+            validPpmCount++;
+        }
+        if (v.temperature != null) latestTemp = v.temperature;
+        if (v.humidity != null) latestHumidity = v.humidity;
+    });
+
+    const avgPpm = validPpmCount > 0 ? Math.round(totalPpm / validPpmCount) : 0;
+    const avgElem = document.getElementById("avgEmission");
+    if (avgElem) avgElem.innerHTML = `${avgPpm} <small>PPM</small>`;
+
+    const avgStatus = getAqiStatus(avgPpm);
+    const statusSub = document.getElementById("avgEmissionStatus");
+    if (statusSub) {
+        statusSub.textContent = `Fleet AQI: ${avgStatus.label}`;
+        statusSub.style.color = avgStatus.color;
+    }
+
+    if (latestTemp != null) {
+        const kpiTemp = document.getElementById("kpiTemp");
+        if (kpiTemp) kpiTemp.innerHTML = `${Number(latestTemp).toFixed(1)} <small>°C</small>`;
+    }
+    if (latestHumidity != null) {
+        const kpiHumidity = document.getElementById("kpiHumidity");
+        if (kpiHumidity) kpiHumidity.innerHTML = `${Math.round(Number(latestHumidity))} <small>%</small>`;
+    }
 }
 
-/* ---------------- ALERTS FEED ---------------- */
+function renderSelectedVehicleTelemetry(v, id) {
+    const ppm = v.co2_ppm || 0;
+    const aqi = getAqiStatus(ppm);
+    const freshness = getDeviceFreshness(v);
+
+    const vehNum = document.getElementById("vehicleNumber");
+    if (vehNum) vehNum.textContent = id;
+
+    const co2Lvl = document.getElementById("co2Level");
+    if (co2Lvl) co2Lvl.textContent = ppm;
+
+    const emPerKm = document.getElementById("emissionPerKm");
+    if (emPerKm) emPerKm.innerHTML = `${v.emission_per_km || (ppm / 200).toFixed(2)} <small>g/km</small>`;
+
+    const totEm = document.getElementById("totalEmission");
+    if (totEm) totEm.innerHTML = `${v.total_emission || 0} <small>g</small>`;
+
+    const nodeT = document.getElementById("nodeTemp");
+    if (nodeT) nodeT.innerHTML = `${v.temperature != null ? Number(v.temperature).toFixed(1) : '--'} <small>°C</small>`;
+
+    const nodeH = document.getElementById("nodeHumidity");
+    if (nodeH) nodeH.innerHTML = `${v.humidity != null ? Math.round(Number(v.humidity)) : '--'} <small>%</small>`;
+
+    // Raw ADC & Sensor Diagnostic
+    const rawAdcElem = document.getElementById("nodeRawADC");
+    if (rawAdcElem) rawAdcElem.textContent = v.raw_adc != null ? `ADC: ${v.raw_adc}` : 'ADC: N/A';
+
+    // GPS Details & Coordinates
+    const lat = v.latitude ? Number(v.latitude).toFixed(4) : "13.0236";
+    const lng = v.longitude ? Number(v.longitude).toFixed(4) : "74.9676";
+    const gpsCoord = document.getElementById("gpsCoordinates");
+    if (gpsCoord) gpsCoord.textContent = `Lat: ${lat} | Lng: ${lng}`;
+
+    // GPS Status Banner
+    const isLiveGps = (v.gps_valid === true && v.location_source === "gps");
+    const gpsSourceElem = document.getElementById("gpsSourceBadge");
+    if (gpsSourceElem) {
+        if (isLiveGps) {
+            gpsSourceElem.className = "gps-pill gps-live";
+            gpsSourceElem.innerHTML = "📡 LIVE GPS";
+        } else if (v.location_source === "demo_fallback") {
+            gpsSourceElem.className = "gps-pill gps-demo";
+            gpsSourceElem.innerHTML = "🏢 DEMO LOCATION (AIET)";
+        } else {
+            gpsSourceElem.className = "gps-pill gps-none";
+            gpsSourceElem.innerHTML = "⚠️ NO GPS FIX";
+        }
+    }
+
+    // Status Badges
+    const statusBadge = document.getElementById("vehicleStatusBadge");
+    if (statusBadge) {
+        statusBadge.textContent = aqi.label;
+        statusBadge.className = `status-badge status-${aqi.class}`;
+    }
+
+    const aqiTag = document.getElementById("aqiCategoryTag");
+    if (aqiTag) {
+        aqiTag.textContent = aqi.label;
+        aqiTag.className = `gauge-tag status-${aqi.class}`;
+    }
+
+    // Radial Gauge Conic Gradient
+    const percent = Math.min(Math.max((ppm / 2800) * 280, 20), 280);
+    const gauge = document.getElementById("gaugeCircle");
+    if (gauge) {
+        gauge.style.background = `conic-gradient(${aqi.color} 0deg ${percent}deg, #e2e8f0 ${percent}deg 360deg)`;
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Incident Alerts Feed & Acoustic Chimes                                     */
+/* -------------------------------------------------------------------------- */
 function renderAlerts(alerts) {
     const tbody = document.getElementById("alertsBody");
     if (!tbody) return;
     tbody.innerHTML = "";
 
-    const alertList = Object.values(alerts).reverse();
+    const alertEntries = Object.entries(alerts).reverse();
     const countElem = document.getElementById("alertCount");
-    if (countElem) countElem.textContent = alertList.length;
+    if (countElem) countElem.textContent = alertEntries.length;
 
     const badgeElem = document.getElementById("alertCounterBadge");
-    if (badgeElem) badgeElem.textContent = `${alertList.length} Incidents Logged`;
+    if (badgeElem) badgeElem.textContent = `${alertEntries.length} Incidents Logged`;
 
-    if (alertList.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="6" class="text-center">No alerts recorded. All systems within safe parameters.</td></tr>`;
+    if (alertEntries.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" class="text-center">No active alerts recorded. All systems within safe environmental thresholds.</td></tr>`;
         return;
     }
 
-    let hasCritical = false;
+    let newlyTriggeredHighAlert = false;
 
-    alertList.forEach(a => {
+    alertEntries.forEach(([key, a]) => {
         const aqi = getAqiStatus(a.co2 || 1200);
-        if (a.status === "High" || (a.co2 && a.co2 > THRESHOLDS.MODERATE)) {
-            hasCritical = true;
+
+        // Sound chime only once per unique alert key
+        if (!processedAlertIds.has(key)) {
+            processedAlertIds.add(key);
+            if (a.status === "High" || (a.co2 && a.co2 >= THRESHOLDS.MODERATE)) {
+                newlyTriggeredHighAlert = true;
+            }
         }
 
-        const dateStr = a.time ? new Date(a.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'Just now';
+        let dateStr = "Just now";
+        if (a.time && typeof a.time === "number" && a.time > 1700000000000) {
+            dateStr = new Date(a.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        }
 
         const tr = document.createElement("tr");
         tr.innerHTML = `
             <td><strong>${a.vehicle || 'Unknown'}</strong></td>
             <td><strong>${a.co2 || '--'}</strong> PPM</td>
             <td>${dateStr}</td>
-            <td><code>${a.location || '12.9716, 77.5946'}</code></td>
-            <td><span class="status-tag status-${aqi.class}">${a.status || aqi.label}</span></td>
-            <td><small>${a.note || 'Automatic threshold trigger'}</small></td>
+            <td><code>${a.location || '13.0236, 74.9676'}</code></td>
+            <td><span class="status-badge status-${aqi.class}">${a.status || aqi.label}</span></td>
+            <td><small>${a.note || 'Automatic threshold breach trigger'}</small></td>
         `;
         tbody.appendChild(tr);
     });
 
-    if (hasCritical && audioAlertsEnabled) {
+    if (newlyTriggeredHighAlert && audioAlertsEnabled) {
         playAlertChime();
     }
 }
 
-/* ---------------- AUDIO ALERT SYNTHESIZER ---------------- */
 function playAlertChime() {
     try {
         const AudioCtx = window.AudioContext || window.webkitAudioContext;
         if (!AudioCtx) return;
-        const audioCtx = new AudioCtx();
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
+        const ctx = new AudioCtx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+
         osc.type = "sine";
-        osc.frequency.setValueAtTime(880, audioCtx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(440, audioCtx.currentTime + 0.3);
-        gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+        osc.frequency.setValueAtTime(880, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.35);
+
+        gain.gain.setValueAtTime(0.2, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.35);
+
         osc.connect(gain);
-        gain.connect(audioCtx.destination);
+        gain.connect(ctx.destination);
+
         osc.start();
-        osc.stop(audioCtx.currentTime + 0.3);
+        osc.stop(ctx.currentTime + 0.35);
     } catch (e) {
-        // Ignore audio errors
+        // Suppress browser autoplay restrictions
     }
 }
 
-/* ---------------- UI CONTROLS ---------------- */
+/* -------------------------------------------------------------------------- */
+/* UI Event Controls & Handlers                                               */
+/* -------------------------------------------------------------------------- */
 function setupUIControls() {
+    // Refresh Button
     document.getElementById("refreshBtn")?.addEventListener("click", () => {
         fetchLiveData();
     });
 
-    document.querySelectorAll(".chart-tab").forEach(tab => {
-        tab.addEventListener("click", (e) => {
-            document.querySelectorAll(".chart-tab").forEach(t => t.classList.remove("active"));
+    // Chart metric tab toggles
+    document.querySelectorAll(".tab-btn").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+            document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
             e.target.classList.add("active");
             activeChartMetric = e.target.getAttribute("data-chart");
             updateChartDisplay();
         });
     });
 
+    // Heatmap toggle
     document.getElementById("toggleHeatmapBtn")?.addEventListener("click", () => {
         if (!map || !heatLayer) return;
         heatmapVisible = !heatmapVisible;
@@ -555,47 +655,64 @@ function setupUIControls() {
         }
     });
 
+    // Audio alarm toggle
     document.getElementById("audioToggleBtn")?.addEventListener("click", () => {
         audioAlertsEnabled = !audioAlertsEnabled;
         const txt = document.getElementById("audioStateText");
         if (txt) txt.textContent = audioAlertsEnabled ? "ON" : "MUTED";
     });
 
+    // Map recenter button
     document.getElementById("recenterMapBtn")?.addEventListener("click", () => {
         if (fleetData[selectedVehicle]) {
             centerVehicleOnMap(fleetData[selectedVehicle]);
         } else if (map) {
-            map.setView(MAP_CONFIG.center, MAP_CONFIG.zoom);
+            map.setView(DEMO_LOCATION.center, DEMO_LOCATION.zoom);
         }
     });
 
-    document.getElementById("downloadCSV")?.addEventListener("click", (e) => {
-        e.preventDefault();
-        exportFleetCSV();
+    // Demo Mode toggle
+    document.getElementById("toggleDemoModeBtn")?.addEventListener("click", () => {
+        isDemoSimulation = !isDemoSimulation;
+        const btn = document.getElementById("toggleDemoModeBtn");
+        if (btn) {
+            btn.textContent = isDemoSimulation ? "⚡ Mode: Demo Simulation" : "☁️ Mode: Live Cloud";
+            btn.className = isDemoSimulation ? "btn btn-secondary" : "btn btn-primary";
+        }
+        fetchLiveData();
     });
 
-    document.getElementById("downloadJSON")?.addEventListener("click", (e) => {
-        e.preventDefault();
-        exportFleetJSON();
-    });
+    // CSV & JSON Exports
+    document.getElementById("downloadCSVBtn")?.addEventListener("click", exportFleetCSV);
+    document.getElementById("downloadJSONBtn")?.addEventListener("click", exportFleetJSON);
 }
 
+/* -------------------------------------------------------------------------- */
+/* Data Export Modules                                                        */
+/* -------------------------------------------------------------------------- */
 function exportFleetCSV() {
-    let csv = "Vehicle_ID,CO2_PPM,Temperature_C,Humidity_Pct,Emission_per_km,Total_Emission,Latitude,Longitude,Status,Timestamp\n";
+    let csv = "Vehicle_ID,CO2_PPM,Raw_ADC,Temperature_C,Humidity_Pct,DHT_Valid,Latitude,Longitude,GPS_Valid,Location_Source,Emission_g_per_km,Total_Emission_g,Status,Timestamp\n";
+    
     Object.keys(fleetData).forEach(id => {
         const v = fleetData[id];
-        csv += `${id},${v.co2_ppm || 0},${v.temperature || ''},${v.humidity || ''},${v.emission_per_km || ''},${v.total_emission || ''},${v.latitude || ''},${v.longitude || ''},${v.status || ''},${v.timestamp || ''}\n`;
+        csv += `${id},${v.co2_ppm || 0},${v.raw_adc || ''},${v.temperature || ''},${v.humidity || ''},${v.dht_valid != null ? v.dht_valid : ''},${v.latitude || ''},${v.longitude || ''},${v.gps_valid != null ? v.gps_valid : ''},"${v.location_source || ''}",${v.emission_per_km || ''},${v.total_emission || ''},"${v.status || ''}",${v.timestamp || ''}\n`;
     });
 
-    downloadFile(csv, "text/csv", `cityfleet_pollution_${Date.now()}.csv`);
+    downloadBlob(csv, "text/csv", `cityfleet_telemetry_${Date.now()}.csv`);
 }
 
 function exportFleetJSON() {
-    const jsonStr = JSON.stringify(fleetData, null, 2);
-    downloadFile(jsonStr, "application/json", `cityfleet_pollution_${Date.now()}.json`);
+    const payload = {
+        exported_at: new Date().toISOString(),
+        location_reference: DEMO_LOCATION.name,
+        fleet: fleetData,
+        alerts: alertsData
+    };
+    const jsonStr = JSON.stringify(payload, null, 2);
+    downloadBlob(jsonStr, "application/json", `cityfleet_snapshot_${Date.now()}.json`);
 }
 
-function downloadFile(content, mimeType, filename) {
+function downloadBlob(content, mimeType, filename) {
     const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -605,22 +722,34 @@ function downloadFile(content, mimeType, filename) {
     URL.revokeObjectURL(url);
 }
 
-/* ---------------- HEARTBEAT TIMER ---------------- */
+/* -------------------------------------------------------------------------- */
+/* Diagnostic & Status Helpers                                                */
+/* -------------------------------------------------------------------------- */
 function startHeartbeatTimer() {
     setInterval(() => {
         const elapsedSec = Math.floor((Date.now() - lastPacketTimestamp) / 1000);
         const timerElem = document.getElementById("lastSyncTimer");
         if (timerElem) {
-            if (elapsedSec < 3) {
-                timerElem.textContent = "Updated: Just now";
-            } else {
-                timerElem.textContent = `Updated: ${elapsedSec}s ago`;
-            }
+            timerElem.textContent = (elapsedSec < 3) ? "Updated: Just now" : `Updated: ${elapsedSec}s ago`;
         }
     }, 1000);
 }
 
-/* ---------------- AQI HELPER ---------------- */
+function getDeviceFreshness(v) {
+    const ts = v.last_seen || v.timestamp;
+    if (!ts || typeof ts !== "number" || ts < 1700000000000) {
+        return { label: "ONLINE (Uptime)", state: "live" };
+    }
+
+    const ageMs = Date.now() - ts;
+    if (ageMs < STALE_THRESHOLD_MS) {
+        return { label: "LIVE", state: "live" };
+    } else if (ageMs < STALE_THRESHOLD_MS * 4) {
+        return { label: "STALE", state: "stale" };
+    }
+    return { label: "OFFLINE", state: "offline" };
+}
+
 function getAqiStatus(ppm) {
     if (ppm <= THRESHOLDS.NORMAL) {
         return { label: "Good Air", class: "normal", color: "#10b981" };

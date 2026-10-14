@@ -1,8 +1,9 @@
 /*
  * ==============================================================================
- * Project: CityFleet IoT Pollution Monitoring System
- * Hardware: ESP32 + MQ-135 Gas Sensor + DHT11 Temp/Humidity + NEO-6M GPS
- * Target Cloud: Firebase Realtime Database
+ * Project: CityFleet IoT Pollution & Environmental Monitoring System
+ * Target Hardware: ESP32-WROOM-32
+ * Sensors: MQ-135 (Gas), DHT11 (Temp/Hum), NEO-6M (GPS)
+ * Cloud Backend: Firebase Realtime Database
  * ==============================================================================
  */
 
@@ -12,104 +13,128 @@
 #include <TinyGPSPlus.h>
 #include <DHT.h>
 #include <ArduinoJson.h>
+#include <time.h>
 
-// ==========================================
-// 1. Wi-Fi & Firebase Configuration
-// ==========================================
-const char* WIFI_SSID     = "Shivu";
-const char* WIFI_PASSWORD = "12345678";
+#include "config.h"
 
-// Firebase Realtime Database URL and Secret / Auth Key
-// Database URL format: "https://<PROJECT_ID>-default-rtdb.firebaseio.com"
-const char* FIREBASE_HOST = "https://pollutionmonitoring-4156-69176-default-rtdb.firebaseio.com";
-const char* FIREBASE_AUTH = "Yp3TIa3LJsekyl7uSorerohHrijf97UVjQMHkwR5k"; // Or leave empty if public rules are enabled for testing
-
-// Vehicle Identifier (Matches the dashboard schema)
-const char* VEHICLE_ID    = "KA01-5522";
-
-// ==========================================
-// 2. Hardware Pin Definitions
-// ==========================================
-// MQ-135 Gas Sensor (Must use ADC1 pin: GPIO 32-39 to avoid Wi-Fi conflicts)
-#define MQ135_ANALOG_PIN  34
-
-// DHT11 Sensor
-#define DHTPIN            4
-#define DHTTYPE           DHT11
-
-// NEO-6M GPS Module (HardwareSerial 2)
-#define GPS_RX_PIN        26  // Connect to NEO-6M TX
-#define GPS_TX_PIN        27  // Connect to NEO-6M RX
-#define GPS_BAUD          9600
-
-// ==========================================
-// 3. Sensor Objects & Global Variables
-// ==========================================
+// Hardware Objects
 DHT dht(DHTPIN, DHTTYPE);
 TinyGPSPlus gps;
 HardwareSerial gpsSerial(2);
 
-// Thresholds matching public/config.js
-const int THRESHOLD_NORMAL   = 1000;
-const int THRESHOLD_MODERATE = 2000;
-
-// Emission tracking variables
+// Telemetry State
 float cumulative_emission = 0.0;
 unsigned long lastSendTime = 0;
-const unsigned long SEND_INTERVAL_MS = 3000; // Send telemetry every 3 seconds
 
-// ==========================================
-// 4. Helper Functions
-// ==========================================
+// Alert Debounce & Cooldown State
+String lastAlertStatus = "Normal";
+unsigned long lastAlertTime = 0;
 
-// Estimate CO2 / Air Quality PPM from MQ-135 analog voltage
-float readMQ135PPM() {
-  int rawValue = analogRead(MQ135_ANALOG_PIN);
-  float voltage = (rawValue / 4095.0) * 3.3;
-  
-  // Approximate MQ-135 PPM mapping (Calibrate with baseline R0 in clean air)
-  // Standard curve approximation for MQ-135
-  float ppm = map(rawValue, 0, 4095, 350, 3000);
-  if (ppm < 350) ppm = 350;
+// Time Sync State
+bool ntpConfigured = false;
+
+// ==============================================================================
+// Helper: Obtain Epoch Timestamp (Milliseconds) via NTP
+// ==============================================================================
+uint64_t getEpochTimestampMs(bool &isSynced) {
+  time_t now;
+  struct tm timeinfo;
+  if (time(&now) > 1700000000) { // Valid time after Nov 2023
+    isSynced = true;
+    return ((uint64_t)now * 1000ULL) + (millis() % 1000);
+  }
+  isSynced = false;
+  return millis();
+}
+
+// ==============================================================================
+// Helper: MQ-135 Gas Sensor Reading & Power-Law Approximation
+// ==============================================================================
+float readMQ135PPM(int &rawADC, float &sensorVoltage) {
+  rawADC = analogRead(MQ135_ANALOG_PIN);
+  sensorVoltage = (rawADC / 4095.0) * 3.3;
+
+  // Protect against divide-by-zero or short-circuits
+  if (sensorVoltage <= 0.05) sensorVoltage = 0.05;
+  if (sensorVoltage >= 3.25) sensorVoltage = 3.25;
+
+  // Calculate sensor resistance: Rs = ((Vc - Vout) / Vout) * RL
+  float Rs = ((3.3 - sensorVoltage) / sensorVoltage) * MQ135_RL_OHMS;
+
+  // Power-law curve approximation for CO2 equivalent: PPM = A * (Rs / R0) ^ B
+  float ratio = Rs / MQ135_R0_CLEAN_AIR;
+  float ppm = MQ135_CURVE_A * pow(ratio, MQ135_CURVE_B);
+
+  // Bound within reasonable atmospheric and sensor measurement bounds
+  if (ppm < 350.0) ppm = 350.0;
+  if (ppm > 5000.0) ppm = 5000.0;
+
   return ppm;
 }
 
-// Determine status string based on PPM
-String getStatus(float ppm) {
+// ==============================================================================
+// Helper: Determine Status Tier
+// ==============================================================================
+String getStatusTier(float ppm) {
   if (ppm <= THRESHOLD_NORMAL) return "Normal";
   if (ppm <= THRESHOLD_MODERATE) return "Moderate";
   return "High";
 }
 
-// Send HTTP PUT/PATCH request to Firebase RTDB REST API
-void sendToFirebase(String path, String jsonPayload) {
+// ==============================================================================
+// Helper: Send HTTP PATCH Telemetry to Firebase RTDB
+// ==============================================================================
+bool sendTelemetryToFirebase(String jsonPayload) {
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[WiFi] Disconnected! Reconnecting...");
+    Serial.println("[WiFi] Lost connection. Attempting auto-reconnect...");
     WiFi.reconnect();
-    return;
+    return false;
   }
 
   HTTPClient http;
-  String url = String(FIREBASE_HOST) + path + ".json";
+  String url = String(FIREBASE_HOST) + "/vehicles/" + String(VEHICLE_ID) + ".json";
   if (strlen(FIREBASE_AUTH) > 0) {
     url += "?auth=" + String(FIREBASE_AUTH);
   }
 
   http.begin(url);
+  http.setTimeout(HTTP_TIMEOUT_MS);
   http.addHeader("Content-Type", "application/json");
 
-  int httpCode = http.PATCH(jsonPayload); // Use PATCH to update fields without overwriting everything
+  int httpCode = http.PATCH(jsonPayload);
+  bool success = false;
 
-  if (httpCode > 0) {
-    Serial.printf("[Firebase] Telemetry synced (%d): %s\n", httpCode, jsonPayload.c_str());
+  if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_NO_CONTENT) {
+    Serial.printf("[Firebase] Telemetry synced (HTTP %d)\n", httpCode);
+    success = true;
+  } else if (httpCode > 0) {
+    Serial.printf("[Firebase] Server returned HTTP %d: %s\n", httpCode, http.getString().c_str());
   } else {
-    Serial.printf("[Firebase] HTTP error: %s\n", http.errorToString(httpCode).c_str());
+    Serial.printf("[Firebase] Connection failed: %s\n", http.errorToString(httpCode).c_str());
   }
+
   http.end();
+  return success;
 }
 
-// Send an alert record when threshold exceeded
-void sendAlert(String vehicleId, float ppm, float lat, float lng, String status, String note) {
+// ==============================================================================
+// Helper: Send Alert to Firebase RTDB (With Debounce & Cooldown)
+// ==============================================================================
+void checkAndSendAlert(String vehicleId, float ppm, float lat, float lng, String status, String note, uint64_t timestamp) {
+  // Only trigger for non-normal conditions
+  if (status == "Normal") {
+    lastAlertStatus = "Normal";
+    return;
+  }
+
+  bool statusChanged = (status != lastAlertStatus);
+  bool cooldownElapsed = (millis() - lastAlertTime >= ALERT_COOLDOWN_MS);
+
+  if (!statusChanged && !cooldownElapsed) {
+    // Suppress redundant alert flooding
+    return;
+  }
+
   if (WiFi.status() != WL_CONNECTED) return;
 
   HTTPClient http;
@@ -118,10 +143,10 @@ void sendAlert(String vehicleId, float ppm, float lat, float lng, String status,
     url += "?auth=" + String(FIREBASE_AUTH);
   }
 
-  StaticJsonDocument<256> alertDoc;
+  StaticJsonDocument<384> alertDoc;
   alertDoc["vehicle"] = vehicleId;
   alertDoc["co2"] = (int)ppm;
-  alertDoc["time"] = millis(); // or epoch timestamp if NTP is configured
+  alertDoc["time"] = timestamp;
   alertDoc["location"] = String(lat, 4) + ", " + String(lng, 4);
   alertDoc["status"] = status;
   alertDoc["note"] = note;
@@ -130,91 +155,181 @@ void sendAlert(String vehicleId, float ppm, float lat, float lng, String status,
   serializeJson(alertDoc, alertPayload);
 
   http.begin(url);
+  http.setTimeout(HTTP_TIMEOUT_MS);
   http.addHeader("Content-Type", "application/json");
+
   int httpCode = http.POST(alertPayload);
+  if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_NO_CONTENT) {
+    Serial.printf("[Alert] Incident logged (HTTP %d): %s | %d PPM\n", httpCode, status.c_str(), (int)ppm);
+    lastAlertStatus = status;
+    lastAlertTime = millis();
+  } else {
+    Serial.printf("[Alert] Failed to log incident (HTTP %d)\n", httpCode);
+  }
+
   http.end();
 }
 
-// ==========================================
-// 5. Setup
-// ==========================================
+// ==============================================================================
+// Setup Routine
+// ==============================================================================
 void setup() {
   Serial.begin(115200);
-  delay(1000);
-  Serial.println("\n--- Starting CityFleet Pollution Monitor ---");
+  delay(1200);
+
+  Serial.println("\n=======================================================");
+  Serial.println("  CityFleet IoT Pollution Monitoring Station (ESP32)");
+  Serial.println("=======================================================");
+  Serial.printf("Node ID: %s\n", VEHICLE_ID);
+  Serial.printf("Demo Fallback: %s (%s)\n", 
+                ENABLE_DEMO_GPS_FALLBACK ? "ENABLED" : "DISABLED", 
+                DEMO_LOCATION_NAME);
 
   // Initialize Sensors
   pinMode(MQ135_ANALOG_PIN, INPUT);
   dht.begin();
   gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
+  Serial.println("[Sensors] MQ-135, DHT11, and NEO-6M initialized.");
 
   // Connect to Wi-Fi
-  Serial.printf("Connecting to Wi-Fi: %s", WIFI_SSID);
+  Serial.printf("[WiFi] Connecting to %s", WIFI_SSID);
+  WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+
+  unsigned long startAttempt = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < 15000) {
+    delay(400);
     Serial.print(".");
   }
-  Serial.println("\n[WiFi] Connected! IP: " + WiFi.localIP().toString());
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\n[WiFi] Connected! IP: " + WiFi.localIP().toString());
+    // Configure NTP Time Sync
+    configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER_1, NTP_SERVER_2);
+    ntpConfigured = true;
+    Serial.println("[NTP] SNTP time synchronization requested.");
+  } else {
+    Serial.println("\n[WiFi] Connection timed out. Running in offline/reconnect mode.");
+  }
 }
 
-// ==========================================
-// 6. Main Loop
-// ==========================================
+// ==============================================================================
+// Main Loop Routine
+// ==============================================================================
 void loop() {
-  // Continuously feed incoming GPS characters to TinyGPS++
+  // 1. Continuously process incoming NMEA characters from GPS module
   while (gpsSerial.available() > 0) {
     gps.encode(gpsSerial.read());
   }
 
-  // Periodic Telemetry Publishing
+  // 2. Periodic Telemetry Transmission Loop
   if (millis() - lastSendTime >= SEND_INTERVAL_MS) {
     lastSendTime = millis();
 
-    // 1. Read Gas & Environmental Sensors
-    float co2_ppm = readMQ135PPM();
-    float temperature = dht.readTemperature();
-    float humidity = dht.readHumidity();
-
-    // 2. Read GPS Coordinates (default fallback to Bangalore if searching for satellites)
-    float latitude = 12.9716;
-    float longitude = 77.5946;
-    if (gps.location.isValid()) {
-      latitude = gps.location.lat();
-      longitude = gps.location.lng();
-    } else {
-      Serial.println("[GPS] Searching for satellite fix... using default location coordinates.");
+    // Re-trigger NTP config if connection was established late
+    if (!ntpConfigured && WiFi.status() == WL_CONNECTED) {
+      configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER_1, NTP_SERVER_2);
+      ntpConfigured = true;
     }
 
-    // 3. Compute stats
-    String status = getStatus(co2_ppm);
-    float emission_per_km = (co2_ppm / 200.0); // Derived emission metric
-    cumulative_emission += (emission_per_km * 0.05); // Accumulating emission over time
+    // A. Read MQ-135 Air Quality Sensor
+    int rawADC = 0;
+    float sensorVoltage = 0.0;
+    float co2_ppm = readMQ135PPM(rawADC, sensorVoltage);
+    String status = getStatusTier(co2_ppm);
 
-    // 4. Construct JSON Payload matching dashboard schema
-    StaticJsonDocument<384> doc;
+    // B. Read DHT11 Temperature & Humidity
+    float temperature = dht.readTemperature();
+    float humidity = dht.readHumidity();
+    bool dht_valid = !isnan(temperature) && !isnan(humidity) &&
+                     (temperature >= -10.0 && temperature <= 65.0) &&
+                     (humidity >= 0.0 && humidity <= 100.0);
+
+    // C. Read GPS Coordinates with Explicit Demonstration Fallback
+    float latitude = 0.0;
+    float longitude = 0.0;
+    bool gps_valid = false;
+    String location_source = "unavailable";
+    String location_label = "Location Unavailable";
+
+    if (gps.location.isValid() && (gps.location.age() < 5000)) {
+      latitude = gps.location.lat();
+      longitude = gps.location.lng();
+      gps_valid = true;
+      location_source = "gps";
+      location_label = "Live GPS Fix (" + String(gps.satellites.value()) + " sats)";
+    } else if (ENABLE_DEMO_GPS_FALLBACK) {
+      latitude = DEMO_LATITUDE;
+      longitude = DEMO_LONGITUDE;
+      gps_valid = false;
+      location_source = "demo_fallback";
+      location_label = DEMO_LOCATION_NAME;
+    }
+
+    // D. Compute Derived Emission Metrics
+    float emission_per_km = co2_ppm / 200.0;
+    cumulative_emission += (emission_per_km * (SEND_INTERVAL_MS / 60000.0));
+
+    // E. Resolve Network Timestamp
+    bool time_synced = false;
+    uint64_t timestamp = getEpochTimestampMs(time_synced);
+
+    // F. Build JSON Payload
+    StaticJsonDocument<512> doc;
+    doc["vehicle_id"] = VEHICLE_ID;
     doc["co2_ppm"] = (int)co2_ppm;
-    doc["emission_per_km"] = serialized(String(emission_per_km, 2));
-    doc["total_emission"] = serialized(String(cumulative_emission, 1));
+    doc["raw_adc"] = rawADC;
+    doc["gas_calibrated"] = false; // Flagged as uncalibrated model estimate
+
+    if (dht_valid) {
+      doc["temperature"] = serialized(String(temperature, 1));
+      doc["humidity"] = serialized(String(humidity, 1));
+      doc["dht_valid"] = true;
+    } else {
+      doc["temperature"] = nullptr;
+      doc["humidity"] = nullptr;
+      doc["dht_valid"] = false;
+    }
+
     doc["latitude"] = serialized(String(latitude, 6));
     doc["longitude"] = serialized(String(longitude, 6));
-    doc["temperature"] = isnan(temperature) ? 25.0 : temperature;
-    doc["humidity"] = isnan(humidity) ? 60.0 : humidity;
-    doc["timestamp"] = millis();
+    doc["gps_valid"] = gps_valid;
+    doc["location_source"] = location_source;
+    doc["location_label"] = location_label;
+
+    doc["emission_per_km"] = serialized(String(emission_per_km, 2));
+    doc["total_emission"] = serialized(String(cumulative_emission, 1));
     doc["status"] = status;
+    doc["timestamp"] = timestamp;
+    doc["time_synced"] = time_synced;
+    doc["last_seen"] = timestamp;
 
     String jsonPayload;
     serializeJson(doc, jsonPayload);
 
-    // 5. Push to Firebase RTDB under /vehicles/<VEHICLE_ID>
-    String vehiclePath = "/vehicles/" + String(VEHICLE_ID);
-    sendToFirebase(vehiclePath, jsonPayload);
+    // G. Output Diagnostics to Serial Monitor
+    Serial.println("\n-------------------------------------------------------");
+    Serial.printf("[Telemetry] Node: %s | CO2: %d PPM (ADC: %d) | Status: %s\n",
+                  VEHICLE_ID, (int)co2_ppm, rawADC, status.c_str());
+    if (dht_valid) {
+      Serial.printf("[Climate] Temp: %.1f °C | Humidity: %.1f %%\n", temperature, humidity);
+    } else {
+      Serial.println("[Climate] DHT11 sensor read failed/unavailable.");
+    }
+    Serial.printf("[Location] Source: %s | Lat: %.4f, Lng: %.4f (%s)\n",
+                  location_source.c_str(), latitude, longitude, location_label.c_str());
+    Serial.printf("[Time] Epoch: %llu ms | Synced: %s\n",
+                  (unsigned long long)timestamp, time_synced ? "YES" : "NO (uptime)");
 
-    // 6. Trigger alert if High / Moderate
-    if (co2_ppm > THRESHOLD_MODERATE) {
-      sendAlert(VEHICLE_ID, co2_ppm, latitude, longitude, "High", "Emission Limit Exceeded — Critical Level!");
-    } else if (co2_ppm > THRESHOLD_NORMAL) {
-      sendAlert(VEHICLE_ID, co2_ppm, latitude, longitude, "Moderate", "Threshold nearing upper limit.");
+    // H. Push Telemetry to Firebase RTDB
+    sendTelemetryToFirebase(jsonPayload);
+
+    // I. Check and Debounce Alerts
+    if (status != "Normal") {
+      String note = (status == "High") 
+                    ? "Critical emission spike detected" 
+                    : "Moderate emission threshold warning";
+      checkAndSendAlert(VEHICLE_ID, co2_ppm, latitude, longitude, status, note, timestamp);
     }
   }
 }
