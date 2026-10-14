@@ -1,6 +1,6 @@
 {
   "hosting": {
-    "site": "pollutionmonitoring-41560",
+    "site": "pollutionmonitoring-4156-69176",
     "public": "public",
     "ignore": [
       "firebase.json",

@@ -3,118 +3,1276 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CityFleet Pollution Monitoring Dashboard</title>
+    <title>CityFleet IoT Pollution & Environmental Monitoring</title>
 
-    <!-- Google Font -->
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
 
-    <!-- Firebase SDK -->
-    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js"></script>
-
-    <!-- ✅ Google Maps API -->
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBkHGdHt9um92HXN7z97qpLudE3APvGUM8&libraries=visualization"></script>
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
 
     <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 
-    <!-- Main CSS -->
-    <link rel="stylesheet" href="styles.css">
+    <style>
+        :root {
+            --bg-gradient: linear-gradient(135deg, #f0f4fd 0%, #e2eafc 50%, #edf2fb 100%);
+            --card-bg: #ffffff;
+            --card-border: #d7e3fc;
+            --card-shadow: 0 10px 25px -4px rgba(37, 99, 235, 0.08), 0 4px 10px -2px rgba(37, 99, 235, 0.04);
+            --primary: #2563eb;
+            --primary-gradient: linear-gradient(135deg, #1d4ed8 0%, #0284c7 100%);
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --success: #10b981;
+            --success-bg: #d1fae5;
+            --warning: #f59e0b;
+            --warning-bg: #fef3c7;
+            --danger: #ef4444;
+            --danger-bg: #fee2e2;
+            --radius-lg: 16px;
+            --radius-md: 12px;
+            --radius-sm: 8px;
+        }
 
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-gradient);
+            color: var(--text-main);
+            min-height: 100vh;
+            padding: 24px 32px 48px;
+        }
+
+        .dashboard-container {
+            max-width: 1560px;
+            margin: 0 auto;
+        }
+
+        /* Navbar Header */
+        .navbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 28px;
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--card-shadow);
+            margin-bottom: 24px;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .brand-section {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .logo-box {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            background: var(--primary-gradient);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+        }
+
+        .brand-text h1 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--text-main);
+            line-height: 1.1;
+        }
+
+        .brand-text h1 span {
+            background: var(--primary-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .brand-text p {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+
+        .status-center {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .live-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 14px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.5px;
+            background: rgba(16, 185, 129, 0.15);
+            color: #059669;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            text-transform: uppercase;
+        }
+
+        .pulse-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #10b981;
+            box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+            animation: livePulse 1.8s infinite;
+        }
+
+        @keyframes livePulse {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+
+        .sync-ticker {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+
+        .nav-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 9px 16px;
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 600;
+            border-radius: var(--radius-sm);
+            border: 1px solid transparent;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-decoration: none;
+        }
+
+        .btn-primary {
+            background: var(--primary-gradient);
+            color: white;
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 18px rgba(37, 99, 235, 0.35);
+        }
+
+        .btn-secondary {
+            background: #f1f5f9;
+            color: var(--text-main);
+            border-color: #cbd5e1;
+        }
+
+        .btn-secondary:hover {
+            background: #e2e8f0;
+        }
+
+        .btn-sm {
+            padding: 5px 12px;
+            font-size: 12px;
+        }
+
+        /* KPI Banner */
+        .kpi-row {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 18px;
+            margin-bottom: 24px;
+        }
+
+        .kpi-card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius-md);
+            padding: 18px 20px;
+            box-shadow: var(--card-shadow);
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.2s;
+        }
+
+        .kpi-card:hover {
+            transform: translateY(-2px);
+        }
+
+        .kpi-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 5px;
+            height: 100%;
+            background: var(--primary);
+        }
+
+        .kpi-card.kpi-co2::before { background: #3b82f6; }
+        .kpi-card.kpi-temp::before { background: #f97316; }
+        .kpi-card.kpi-humidity::before { background: #06b6d4; }
+        .kpi-card.kpi-vehicles::before { background: #8b5cf6; }
+        .kpi-card.kpi-alerts::before { background: #ef4444; }
+
+        .kpi-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .kpi-title {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .kpi-icon {
+            font-size: 18px;
+        }
+
+        .kpi-value {
+            font-family: 'Outfit', sans-serif;
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--text-main);
+            line-height: 1.1;
+        }
+
+        .kpi-value small {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-muted);
+        }
+
+        .kpi-desc {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 4px;
+            font-weight: 500;
+        }
+
+        /* Main Workspace Grid */
+        .main-workspace {
+            display: grid;
+            grid-template-columns: 380px 1fr;
+            gap: 24px;
+        }
+
+        .left-panel, .right-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        /* Cards */
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius-lg);
+            padding: 22px;
+            box-shadow: var(--card-shadow);
+        }
+
+        .card-title-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 18px;
+        }
+
+        .card-title-bar h2 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--text-main);
+        }
+
+        .card-title-bar p {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        .badge {
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 700;
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        /* Fleet Vehicle Selector */
+        .vehicle-list {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 220px;
+            overflow-y: auto;
+        }
+
+        .vehicle-list::-webkit-scrollbar {
+            width: 4px;
+        }
+        .vehicle-list::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+
+        .vehicle-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 14px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .vehicle-item:hover {
+            background: #eff6ff;
+            border-color: #bfdbfe;
+            transform: translateX(3px);
+        }
+
+        .vehicle-item.active {
+            background: #dbeafe;
+            border-color: #3b82f6;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+        }
+
+        .v-id {
+            font-weight: 700;
+            font-size: 14px;
+        }
+
+        .v-sub {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        .status-badge {
+            font-size: 11px;
+            font-weight: 700;
+            padding: 3px 8px;
+            border-radius: 999px;
+        }
+
+        .status-normal { background: var(--success-bg); color: #047857; }
+        .status-moderate { background: var(--warning-bg); color: #b45309; }
+        .status-high { background: var(--danger-bg); color: #b91c1c; }
+
+        /* Radial Gauge */
+        .gauge-wrap {
+            display: flex;
+            justify-content: center;
+            margin: 14px 0 20px;
+        }
+
+        .gauge-ring {
+            width: 170px;
+            height: 170px;
+            border-radius: 50%;
+            background: conic-gradient(#10b981 0deg 200deg, #e2e8f0 200deg 360deg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
+            transition: background 0.4s ease;
+        }
+
+        .gauge-center {
+            width: 134px;
+            height: 134px;
+            border-radius: 50%;
+            background: #ffffff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.05);
+        }
+
+        .gauge-value {
+            font-family: 'Outfit', sans-serif;
+            font-size: 32px;
+            font-weight: 800;
+            color: var(--text-main);
+            line-height: 1;
+        }
+
+        .gauge-label {
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-top: 3px;
+        }
+
+        .gauge-tag {
+            font-size: 11px;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 999px;
+            margin-top: 4px;
+        }
+
+        /* Telemetry Stats Grid */
+        .telemetry-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .tele-stat {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: var(--radius-sm);
+            padding: 10px 12px;
+        }
+
+        .tele-stat.span-2 {
+            grid-column: span 2;
+        }
+
+        .tele-lbl {
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            display: block;
+            margin-bottom: 2px;
+        }
+
+        .tele-val {
+            font-family: 'Outfit', sans-serif;
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-main);
+        }
+
+        .tele-val small {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-muted);
+        }
+
+        .tele-val.mono {
+            font-size: 12px;
+            font-family: monospace;
+        }
+
+        /* Charts */
+        .tab-bar {
+            display: flex;
+            background: #e2e8f0;
+            border-radius: var(--radius-sm);
+            padding: 3px;
+            gap: 3px;
+        }
+
+        .tab-btn {
+            padding: 5px 12px;
+            border: none;
+            background: transparent;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-muted);
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .tab-btn.active {
+            background: #ffffff;
+            color: var(--primary);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+        }
+
+        .chart-box {
+            position: relative;
+            height: 280px;
+            width: 100%;
+        }
+
+        /* Map */
+        .map-box {
+            height: 380px;
+            width: 100%;
+            border-radius: var(--radius-md);
+            border: 1px solid var(--card-border);
+            z-index: 1;
+        }
+
+        .leaflet-vehicle-marker {
+            position: relative;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: #2563eb;
+            border: 3px solid white;
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+        }
+
+        .leaflet-vehicle-marker::after {
+            content: '';
+            position: absolute;
+            top: -5px;
+            left: -5px;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            border: 2px solid #3b82f6;
+            animation: mapPulse 2s infinite ease-out;
+        }
+
+        @keyframes mapPulse {
+            0% { transform: scale(0.6); opacity: 1; }
+            100% { transform: scale(1.6); opacity: 0; }
+        }
+
+        /* Alerts Table */
+        .table-wrap {
+            overflow-x: auto;
+            max-height: 280px;
+        }
+
+        .styled-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        .styled-table th {
+            background: #f1f5f9;
+            color: var(--text-muted);
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-size: 11px;
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--card-border);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        .styled-table td {
+            padding: 12px 16px;
+            border-bottom: 1px solid #f1f5f9;
+            color: var(--text-main);
+        }
+
+        .styled-table tr:hover td {
+            background: #f8fafc;
+        }
+
+        .text-center {
+            text-align: center;
+            color: var(--text-muted);
+            padding: 24px;
+        }
+
+        /* Footer */
+        .footer {
+            margin-top: 36px;
+            text-align: center;
+            font-size: 12px;
+            color: var(--text-muted);
+            padding-top: 20px;
+            border-top: 1px solid var(--card-border);
+        }
+
+        @media (max-width: 1180px) {
+            .kpi-row { grid-template-columns: repeat(3, 1fr); }
+            .main-workspace { grid-template-columns: 1fr; }
+        }
+
+        @media (max-width: 768px) {
+            body { padding: 12px; }
+            .kpi-row { grid-template-columns: 1fr 1fr; }
+            .navbar { flex-direction: column; align-items: flex-start; }
+            .nav-controls { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
+        }
+    </style>
 </head>
 <body>
-    <div class="dashboard">
+    <div class="dashboard-container">
+        <!-- Top Navbar -->
+        <header class="navbar">
+            <div class="brand-section">
+                <div class="logo-box">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                    </svg>
+                </div>
+                <div class="brand-text">
+                    <h1>CityFleet <span>Pollution Monitor</span></h1>
+                    <p>ESP32 IoT Real-Time Cloud Telemetry</p>
+                </div>
+            </div>
 
-        <!-- Header -->
-        <header>
-            <h1>CityFleet Pollution Monitoring Dashboard</h1>
+            <div class="status-center">
+                <div class="live-pill">
+                    <span class="pulse-dot"></span>
+                    <span id="hardwareStatusText">ESP32 LIVE STREAM ACTIVE</span>
+                </div>
+                <div class="sync-ticker" id="lastSyncTimer">Updated: Just now</div>
+            </div>
 
-            <div class="controls">
-                <button id="refreshBtn">Refresh</button>
-                <button id="downloadCSV">Download CSV</button>
-                <button id="toggleHeatmap">Toggle Heatmap</button>
+            <div class="nav-controls">
+                <button id="audioToggleBtn" class="btn btn-secondary" title="Toggle Alert Sound">
+                    🔔 Audio: <span id="audioStateText">ON</span>
+                </button>
+                <button id="toggleHeatmapBtn" class="btn btn-secondary" title="Toggle Pollution Heatmap">
+                    🔥 Heatmap
+                </button>
+                <button id="downloadCSVBtn" class="btn btn-secondary">
+                    📥 Export CSV
+                </button>
+                <button id="refreshBtn" class="btn btn-primary">
+                    🔄 Refresh
+                </button>
             </div>
         </header>
 
-        <!-- ✅ NEW Blue Horizontal Summary Section -->
-        <div class="summary-container">
-            <div class="summary-card">
-                <h3>Average Emission</h3>
-                <p id="avgEmission" class="summary-value">- ppm</p>
+        <!-- KPI Metrics Banner -->
+        <section class="kpi-row">
+            <div class="kpi-card kpi-co2">
+                <div class="kpi-header">
+                    <span class="kpi-title">Average Fleet CO₂</span>
+                    <span class="kpi-icon">🌫️</span>
+                </div>
+                <div class="kpi-value" id="avgEmission">-- <small>PPM</small></div>
+                <div class="kpi-desc" id="avgEmissionStatus">Evaluating air purity...</div>
             </div>
 
-            <div class="summary-card">
-                <h3>Total Vehicles</h3>
-                <p id="vehicleCount" class="summary-value">-</p>
+            <div class="kpi-card kpi-temp">
+                <div class="kpi-header">
+                    <span class="kpi-title">Live Temperature (DHT11)</span>
+                    <span class="kpi-icon">🌡️</span>
+                </div>
+                <div class="kpi-value" id="kpiTemp">-- <small>°C</small></div>
+                <div class="kpi-desc">Ambient Thermal Reading</div>
             </div>
 
-            <div class="summary-card">
-                <h3>Current Alerts</h3>
-                <p id="alertCount" class="summary-value">-</p>
-            </div>
-        </div>
-
-        <div class="main-content">
-
-            <!-- ✅ Vehicle List -->
-            <div class="card vehicle-list">
-                <h2>Vehicles</h2>
-                <ul id="vehicleList"></ul>
+            <div class="kpi-card kpi-humidity">
+                <div class="kpi-header">
+                    <span class="kpi-title">Live Humidity (DHT11)</span>
+                    <span class="kpi-icon">💧</span>
+                </div>
+                <div class="kpi-value" id="kpiHumidity">-- <small>%</small></div>
+                <div class="kpi-desc">Relative Air Moisture</div>
             </div>
 
-            <!-- Vehicle Info -->
-            <div class="card vehicle-info">
-                <h2>Vehicle Information</h2>
-                <p>Vehicle Number: <span id="vehicleNumber">-</span></p>
-                <p>CO₂ PPM: <span id="co2Level">-</span></p>
-                <p>Emission per km: <span id="emissionPerKm">-</span></p>
-                <p>Total Emission: <span id="totalEmission">-</span></p>
-                <p>Status: <span id="vehicleStatus">-</span></p>
+            <div class="kpi-card kpi-vehicles">
+                <div class="kpi-header">
+                    <span class="kpi-title">Monitored Fleet</span>
+                    <span class="kpi-icon">🚚</span>
+                </div>
+                <div class="kpi-value" id="vehicleCount">--</div>
+                <div class="kpi-desc">Active Connected Nodes</div>
             </div>
 
-            <!-- Chart -->
-            <div class="card">
-                <h2>Live CO₂ Readings</h2>
-                <canvas id="co2Chart"></canvas>
+            <div class="kpi-card kpi-alerts">
+                <div class="kpi-header">
+                    <span class="kpi-title">Active Alerts</span>
+                    <span class="kpi-icon">⚠️</span>
+                </div>
+                <div class="kpi-value" id="alertCount">0</div>
+                <div class="kpi-desc">Threshold Exceeded</div>
             </div>
+        </section>
 
-            <!-- Heatmap -->
-            <div class="card">
-                <h2>Emission Heatmap</h2>
-                <div id="map"></div>
-            </div>
+        <!-- Main Workspace -->
+        <main class="main-workspace">
+            <!-- Left Sidebar -->
+            <aside class="left-panel">
+                <!-- Vehicle Selector -->
+                <div class="card">
+                    <div class="card-title-bar">
+                        <h2>Fleet Vehicles</h2>
+                        <span class="badge" id="fleetBadge">Live</span>
+                    </div>
+                    <ul id="vehicleList" class="vehicle-list">
+                        <li class="vehicle-item">Loading fleet devices...</li>
+                    </ul>
+                </div>
 
-            <!-- Alerts Table -->
-            <div class="card">
-                <h2>Recent Alerts</h2>
-                <table id="alertsTable">
-                    <thead>
-                        <tr>
-                            <th>Vehicle</th>
-                            <th>CO₂ Level</th>
-                            <th>Time</th>
-                            <th>Location</th>
-                            <th>Status</th>
-                        </tr>
-                    </thead>
-                    <tbody id="alertsBody"></tbody>
-                </table>
-            </div>
+                <!-- Selected Vehicle Telemetry -->
+                <div class="card">
+                    <div class="card-title-bar">
+                        <div>
+                            <h2>Live Telemetry</h2>
+                            <p>Node: <strong id="vehicleNumber">KA01-5522</strong></p>
+                        </div>
+                        <div id="vehicleStatusBadge" class="status-badge status-normal">Normal</div>
+                    </div>
 
-        </div>
+                    <!-- Air Quality Radial Meter -->
+                    <div class="gauge-wrap">
+                        <div class="gauge-ring" id="gaugeCircle">
+                            <div class="gauge-center">
+                                <span class="gauge-value" id="co2Level">--</span>
+                                <span class="gauge-label">PPM CO₂</span>
+                                <span class="gauge-tag status-normal" id="aqiCategory">Good Air</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Sensor Specs Grid -->
+                    <div class="telemetry-grid">
+                        <div class="tele-stat">
+                            <span class="tele-lbl">Emission / km</span>
+                            <span class="tele-val" id="emissionPerKm">-- <small>g/km</small></span>
+                        </div>
+                        <div class="tele-stat">
+                            <span class="tele-lbl">Cumulative Total</span>
+                            <span class="tele-val" id="totalEmission">-- <small>g</small></span>
+                        </div>
+                        <div class="tele-stat">
+                            <span class="tele-lbl">Temperature</span>
+                            <span class="tele-val" id="nodeTemp">-- <small>°C</small></span>
+                        </div>
+                        <div class="tele-stat">
+                            <span class="tele-lbl">Humidity</span>
+                            <span class="tele-val" id="nodeHumidity">-- <small>%</small></span>
+                        </div>
+                        <div class="tele-stat span-2">
+                            <span class="tele-lbl">GPS Fix & Location</span>
+                            <span class="tele-val mono" id="gpsCoordinates">--</span>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Right Main Area -->
+            <section class="right-panel">
+                <!-- Trend Chart -->
+                <div class="card">
+                    <div class="card-title-bar">
+                        <div>
+                            <h2>Environmental Telemetry Trends</h2>
+                            <p>Continuous Real-time Sensor Data Stream</p>
+                        </div>
+                        <div class="tab-bar">
+                            <button class="tab-btn active" data-chart="co2">CO₂ Gas (PPM)</button>
+                            <button class="tab-btn" data-chart="temp">Temperature (°C)</button>
+                            <button class="tab-btn" data-chart="humidity">Humidity (%)</button>
+                        </div>
+                    </div>
+                    <div class="chart-box">
+                        <canvas id="co2Chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Live Map -->
+                <div class="card">
+                    <div class="card-title-bar">
+                        <div>
+                            <h2>Real-Time Fleet GIS Map</h2>
+                            <p>Geospatial Pollution Distribution & GPS Tracking</p>
+                        </div>
+                        <button id="recenterMapBtn" class="btn btn-sm btn-secondary">🎯 Recenter</button>
+                    </div>
+                    <div id="map" class="map-box"></div>
+                </div>
+
+                <!-- Alerts Feed -->
+                <div class="card">
+                    <div class="card-title-bar">
+                        <div>
+                            <h2>Recent Alerts & Anomaly Log</h2>
+                            <p>Auto-triggered on emission spikes</p>
+                        </div>
+                        <span class="badge" id="alertCounterBadge">0 Incidents</span>
+                    </div>
+                    <div class="table-wrap">
+                        <table class="styled-table">
+                            <thead>
+                                <tr>
+                                    <th>Vehicle Node</th>
+                                    <th>CO₂ Level</th>
+                                    <th>Logged Time</th>
+                                    <th>Coordinates</th>
+                                    <th>Severity Status</th>
+                                    <th>Notes</th>
+                                </tr>
+                            </thead>
+                            <tbody id="alertsBody">
+                                <tr>
+                                    <td colspan="6" class="text-center">Awaiting alerts feed...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p><strong>CityFleet IoT Pollution Monitoring System</strong> &bull; Hardware: ESP32 + MQ-135 + DHT11 + NEO-6M GPS &bull; Cloud: Firebase Realtime Database &bull; Developed by Shivanand Hanchinal</p>
+        </footer>
     </div>
 
-    <!-- Legend -->
-    <div class="legend">
-        <h3>Status Legend</h3>
-        <div class="legend-item"><span class="dot green"></span> Normal</div>
-        <div class="legend-item"><span class="dot yellow"></span> Moderate</div>
-        <div class="legend-item"><span class="dot red"></span> High</div>
-    </div>
+    <!-- Embedded Controller Script for 100% Reliable Execution -->
+    <script>
+        const RTDB_BASE_URL = "https://pollutionmonitoring-4156-69176-default-rtdb.firebaseio.com";
+        const THRESHOLDS = { NORMAL: 1000, MODERATE: 2000 };
 
-    <!-- JS -->
-    <script type="module" src="config.js"></script>
-    <script type="module" src="app.js"></script>
+        let map = null;
+        let vehicleMarkers = {};
+        let heatLayer = null;
+        let chart = null;
 
+        let selectedVehicle = "KA01-5522";
+        let fleetData = {};
+        let alertsData = {};
+        let heatmapVisible = true;
+        let audioAlertsEnabled = true;
+        let activeChartMetric = "co2";
+        let lastPacketTimestamp = Date.now();
+
+        const chartHistory = { labels: [], co2: [], temp: [], humidity: [] };
+
+        function initApp() {
+            initLeafletMap();
+            initChart();
+            setupControls();
+            startHeartbeat();
+
+            // High frequency polling
+            fetchData();
+            setInterval(fetchData, 1500);
+        }
+
+        async function fetchData() {
+            try {
+                const [vRes, aRes] = await Promise.all([
+                    fetch(`${RTDB_BASE_URL}/vehicles.json?t=${Date.now()}`),
+                    fetch(`${RTDB_BASE_URL}/alerts.json?t=${Date.now()}`)
+                ]);
+
+                if (vRes.ok) {
+                    const vData = await vRes.json();
+                    if (vData && typeof vData === 'object') {
+                        fleetData = vData;
+                        lastPacketTimestamp = Date.now();
+                        renderFleet(vData);
+                        renderKpis(vData);
+                        renderMap(vData);
+
+                        if (!selectedVehicle || !vData[selectedVehicle]) {
+                            selectedVehicle = Object.keys(vData)[0] || "KA01-5522";
+                        }
+
+                        if (vData[selectedVehicle]) {
+                            renderSelected(vData[selectedVehicle], selectedVehicle);
+                            pushChart(vData[selectedVehicle]);
+                        }
+                    }
+                }
+
+                if (aRes.ok) {
+                    const aData = await aRes.json();
+                    if (aData && typeof aData === 'object') {
+                        alertsData = aData;
+                        renderAlerts(aData);
+                    }
+                }
+            } catch (err) {
+                console.warn("Fetch telemetry warning:", err);
+            }
+        }
+
+        function initLeafletMap() {
+            try {
+                if (typeof L === "undefined") {
+                    setTimeout(initLeafletMap, 300);
+                    return;
+                }
+                const mapElem = document.getElementById("map");
+                if (!mapElem || map) return;
+
+                map = L.map("map", { center: [12.9716, 77.5946], zoom: 13 });
+                L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+                    attribution: '&copy; OpenStreetMap, &copy; CARTO',
+                    maxZoom: 19
+                }).addTo(map);
+
+                if (typeof L.heatLayer === "function") {
+                    heatLayer = L.heatLayer([], {
+                        radius: 30, blur: 20, maxZoom: 17,
+                        gradient: { 0.2: '#10b981', 0.5: '#f59e0b', 0.8: '#ef4444' }
+                    }).addTo(map);
+                }
+                setTimeout(() => map && map.invalidateSize(), 500);
+            } catch (e) {
+                console.error("Map init error:", e);
+            }
+        }
+
+        function initChart() {
+            try {
+                if (typeof Chart === "undefined") {
+                    setTimeout(initChart, 300);
+                    return;
+                }
+                const ctx = document.getElementById("co2Chart")?.getContext("2d");
+                if (!ctx || chart) return;
+
+                const gradient = ctx.createLinearGradient(0, 0, 0, 260);
+                gradient.addColorStop(0, "rgba(37, 99, 235, 0.35)");
+                gradient.addColorStop(1, "rgba(37, 99, 235, 0.0)");
+
+                chart = new Chart(ctx, {
+                    type: "line",
+                    data: {
+                        labels: [],
+                        datasets: [{
+                            label: "CO₂ Level (PPM)",
+                            data: [],
+                            borderColor: "#2563eb",
+                            backgroundColor: gradient,
+                            borderWidth: 2.5,
+                            fill: true,
+                            tension: 0.35,
+                            pointRadius: 3,
+                            pointHoverRadius: 6,
+                            pointBackgroundColor: "#2563eb"
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        animation: { duration: 200 },
+                        scales: {
+                            y: { grid: { color: "#e2e8f0" }, ticks: { color: "#64748b" } },
+                            x: { grid: { display: false }, ticks: { color: "#64748b", maxTicksLimit: 8 } }
+                        },
+                        plugins: { legend: { display: false } }
+                    }
+                });
+            } catch (e) {
+                console.error("Chart init error:", e);
+            }
+        }
+
+        function renderFleet(vehicles) {
+            const list = document.getElementById("vehicleList");
+            if (!list) return;
+            list.innerHTML = "";
+
+            Object.keys(vehicles).forEach(id => {
+                const v = vehicles[id];
+                const status = getAqi(v.co2_ppm || 0);
+
+                const li = document.createElement("li");
+                li.className = `vehicle-item ${id === selectedVehicle ? 'active' : ''}`;
+                li.innerHTML = `
+                    <div>
+                        <div class="v-id">${id}</div>
+                        <div class="v-sub">${v.co2_ppm || 0} PPM &bull; ${v.temperature != null ? Number(v.temperature).toFixed(1) + '°C' : '--'}</div>
+                    </div>
+                    <span class="status-badge status-${status.cls}">${status.txt}</span>
+                `;
+                li.onclick = () => {
+                    selectedVehicle = id;
+                    renderFleet(vehicles);
+                    renderSelected(vehicles[id], id);
+                    centerMap(vehicles[id]);
+                };
+                list.appendChild(li);
+            });
+
+            document.getElementById("fleetBadge").textContent = `${Object.keys(vehicles).length} Active`;
+        }
+
+        function renderKpis(vehicles) {
+            const ids = Object.keys(vehicles);
+            document.getElementById("vehicleCount").textContent = ids.length;
+
+            let totalPpm = 0, count = 0, latestT = null, latestH = null;
+            ids.forEach(id => {
+                const v = vehicles[id];
+                if (v.co2_ppm) { totalPpm += Number(v.co2_ppm); count++; }
+                if (v.temperature != null) latestT = v.temperature;
+                if (v.humidity != null) latestH = v.humidity;
+            });
+
+            const avgPpm = count > 0 ? Math.round(totalPpm / count) : 0;
+            document.getElementById("avgEmission").innerHTML = `${avgPpm} <small>PPM</small>`;
+            const aqi = getAqi(avgPpm);
+            const statusDesc = document.getElementById("avgEmissionStatus");
+            statusDesc.textContent = `Fleet Status: ${aqi.txt}`;
+            statusDesc.style.color = aqi.col;
+
+            if (latestT != null) document.getElementById("kpiTemp").innerHTML = `${Number(latestT).toFixed(1)} <small>°C</small>`;
+            if (latestH != null) document.getElementById("kpiHumidity").innerHTML = `${Math.round(latestH)} <small>%</small>`;
+        }
+
+        function renderSelected(v, id) {
+            const ppm = v.co2_ppm || 0;
+            const aqi = getAqi(ppm);
+
+            document.getElementById("vehicleNumber").textContent = id;
+            document.getElementById("co2Level").textContent = ppm;
+            document.getElementById("emissionPerKm").innerHTML = `${v.emission_per_km || (ppm / 200).toFixed(2)} <small>g/km</small>`;
+            document.getElementById("totalEmission").innerHTML = `${v.total_emission || 0} <small>g</small>`;
+            document.getElementById("nodeTemp").innerHTML = `${v.temperature != null ? Number(v.temperature).toFixed(1) : '--'} <small>°C</small>`;
+            document.getElementById("nodeHumidity").innerHTML = `${v.humidity != null ? Math.round(v.humidity) : '--'} <small>%</small>`;
+
+            const lat = v.latitude ? Number(v.latitude).toFixed(4) : "12.9716";
+            const lng = v.longitude ? Number(v.longitude).toFixed(4) : "77.5946";
+            document.getElementById("gpsCoordinates").textContent = `Lat: ${lat} | Lng: ${lng}`;
+
+            const badge = document.getElementById("vehicleStatusBadge");
+            badge.textContent = aqi.txt;
+            badge.className = `status-badge status-${aqi.cls}`;
+
+            const tag = document.getElementById("aqiCategory");
+            tag.textContent = aqi.txt;
+            tag.className = `gauge-tag status-${aqi.cls}`;
+
+            const pct = Math.min(Math.max((ppm / 2800) * 280, 20), 280);
+            const ring = document.getElementById("gaugeCircle");
+            if (ring) ring.style.background = `conic-gradient(${aqi.col} 0deg ${pct}deg, #e2e8f0 ${pct}deg 360deg)`;
+        }
+
+        function pushChart(v) {
+            if (!v) return;
+            const timeLabel = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            chartHistory.labels.push(timeLabel);
+            chartHistory.co2.push(v.co2_ppm || 0);
+            chartHistory.temp.push(v.temperature != null ? Number(v.temperature) : 25);
+            chartHistory.humidity.push(v.humidity != null ? Number(v.humidity) : 50);
+
+            if (chartHistory.labels.length > 25) {
+                chartHistory.labels.shift();
+                chartHistory.co2.shift();
+                chartHistory.temp.shift();
+                chartHistory.humidity.shift();
+            }
+            updateChart();
+        }
+
+        function updateChart() {
+            if (!chart) return;
+            chart.data.labels = chartHistory.labels;
+            if (activeChartMetric === "co2") {
+                chart.data.datasets[0].label = "CO₂ Level (PPM)";
+                chart.data.datasets[0].data = chartHistory.co2;
+                chart.data.datasets[0].borderColor = "#2563eb";
+                chart.data.datasets[0].pointBackgroundColor = "#2563eb";
+            } else if (activeChartMetric === "temp") {
+                chart.data.datasets[0].label = "Ambient Temperature (°C)";
+                chart.data.datasets[0].data = chartHistory.temp;
+                chart.data.datasets[0].borderColor = "#f97316";
+                chart.data.datasets[0].pointBackgroundColor = "#f97316";
+            } else if (activeChartMetric === "humidity") {
+                chart.data.datasets[0].label = "Relative Humidity (%)";
+                chart.data.datasets[0].data = chartHistory.humidity;
+                chart.data.datasets[0].borderColor = "#06b6d4";
+                chart.data.datasets[0].pointBackgroundColor = "#06b6d4";
+            }
+            chart.update();
+        }
+
+        function renderMap(vehicles) {
+            if (!map) return;
+            const heatPoints = [];
+
+            Object.keys(vehicles).forEach(id => {
+                const v = vehicles[id];
+                if (!v.latitude || !v.longitude) return;
+                const lat = Number(v.latitude), lng = Number(v.longitude), ppm = v.co2_ppm || 400;
+                heatPoints.push([lat, lng, Math.min(ppm / 2500, 1.0)]);
+
+                if (!vehicleMarkers[id]) {
+                    const customIcon = L.divIcon({
+                        className: "custom-map-icon",
+                        html: `<div class="leaflet-vehicle-marker" id="marker-${id}"></div>`,
+                        iconSize: [24, 24], iconAnchor: [12, 12]
+                    });
+                    const marker = L.marker([lat, lng], { icon: customIcon }).addTo(map);
+                    marker.bindPopup(`<strong>🚚 ${id}</strong><br>CO₂: ${ppm} PPM<br>Temp: ${v.temperature || '--'} °C<br>Humidity: ${v.humidity || '--'} %`);
+                    marker.on('click', () => {
+                        selectedVehicle = id;
+                        renderFleet(vehicles);
+                        renderSelected(v, id);
+                    });
+                    vehicleMarkers[id] = marker;
+                } else {
+                    vehicleMarkers[id].setLatLng([lat, lng]);
+                    vehicleMarkers[id].getPopup().setContent(`<strong>🚚 ${id}</strong><br>CO₂: ${ppm} PPM<br>Temp: ${v.temperature || '--'} °C<br>Humidity: ${v.humidity || '--'} %`);
+                }
+            });
+
+            if (heatLayer) heatLayer.setLatLngs(heatPoints);
+        }
+
+        function centerMap(v) {
+            if (!map || !v || !v.latitude || !v.longitude) return;
+            map.flyTo([Number(v.latitude), Number(v.longitude)], 15, { animate: true, duration: 1 });
+        }
+
+        function renderAlerts(alerts) {
+            const tbody = document.getElementById("alertsBody");
+            if (!tbody) return;
+            tbody.innerHTML = "";
+
+            const list = Object.values(alerts).reverse();
+            document.getElementById("alertCount").textContent = list.length;
+            document.getElementById("alertCounterBadge").textContent = `${list.length} Incidents`;
+
+            if (list.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="6" class="text-center">No alerts recorded. All systems normal.</td></tr>`;
+                return;
+            }
+
+            let hasCrit = false;
+            list.forEach(a => {
+                const aqi = getAqi(a.co2 || 1200);
+                if (a.status === "High" || (a.co2 && a.co2 > THRESHOLDS.MODERATE)) hasCrit = true;
+                const dateStr = a.time ? new Date(a.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'Just now';
+                const tr = document.createElement("tr");
+                tr.innerHTML = `
+                    <td><strong>${a.vehicle || 'Unknown'}</strong></td>
+                    <td><strong>${a.co2 || '--'}</strong> PPM</td>
+                    <td>${dateStr}</td>
+                    <td><code>${a.location || '12.9716, 77.5946'}</code></td>
+                    <td><span class="status-badge status-${aqi.cls}">${a.status || aqi.txt}</span></td>
+                    <td><small>${a.note || 'Automatic threshold trigger'}</small></td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            if (hasCrit && audioAlertsEnabled) playChime();
+        }
+
+        function playChime() {
+            try {
+                const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                if (!AudioCtx) return;
+                const ctx = new AudioCtx();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = "sine";
+                osc.frequency.setValueAtTime(880, ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.3);
+                gain.gain.setValueAtTime(0.15, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start();
+                osc.stop(ctx.currentTime + 0.3);
+            } catch (e) {}
+        }
+
+        function setupControls() {
+            document.getElementById("refreshBtn")?.addEventListener("click", fetchData);
+
+            document.querySelectorAll(".tab-btn").forEach(btn => {
+                btn.addEventListener("click", (e) => {
+                    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+                    e.target.classList.add("active");
+                    activeChartMetric = e.target.getAttribute("data-chart");
+                    updateChart();
+                });
+            });
+
+            document.getElementById("toggleHeatmapBtn")?.addEventListener("click", () => {
+                if (!map || !heatLayer) return;
+                heatmapVisible = !heatmapVisible;
+                if (heatmapVisible) map.addLayer(heatLayer);
+                else map.removeLayer(heatLayer);
+            });
+
+            document.getElementById("audioToggleBtn")?.addEventListener("click", () => {
+                audioAlertsEnabled = !audioAlertsEnabled;
+                document.getElementById("audioStateText").textContent = audioAlertsEnabled ? "ON" : "MUTED";
+            });
+
+            document.getElementById("recenterMapBtn")?.addEventListener("click", () => {
+                if (fleetData[selectedVehicle]) centerMap(fleetData[selectedVehicle]);
+                else if (map) map.setView([12.9716, 77.5946], 13);
+            });
+
+            document.getElementById("downloadCSVBtn")?.addEventListener("click", exportCSV);
+        }
+
+        function exportCSV() {
+            let csv = "Vehicle_ID,CO2_PPM,Temperature_C,Humidity_Pct,Emission_per_km,Total_Emission,Latitude,Longitude,Status,Timestamp\n";
+            Object.keys(fleetData).forEach(id => {
+                const v = fleetData[id];
+                csv += `${id},${v.co2_ppm || 0},${v.temperature || ''},${v.humidity || ''},${v.emission_per_km || ''},${v.total_emission || ''},${v.latitude || ''},${v.longitude || ''},${v.status || ''},${v.timestamp || ''}\n`;
+            });
+            const blob = new Blob([csv], { type: "text/csv" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `cityfleet_pollution_${Date.now()}.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function startHeartbeat() {
+            setInterval(() => {
+                const sec = Math.floor((Date.now() - lastPacketTimestamp) / 1000);
+                const elem = document.getElementById("lastSyncTimer");
+                if (elem) elem.textContent = sec < 3 ? "Updated: Just now" : `Updated: ${sec}s ago`;
+            }, 1000);
+        }
+
+        function getAqi(ppm) {
+            if (ppm <= THRESHOLDS.NORMAL) return { txt: "Good Air", cls: "normal", col: "#10b981" };
+            if (ppm <= THRESHOLDS.MODERATE) return { txt: "Moderate", cls: "moderate", col: "#f59e0b" };
+            return { txt: "High / Alert", cls: "high", col: "#ef4444" };
+        }
+
+        // Initialize immediately
+        if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", initApp);
+        } else {
+            initApp();
+        }
+    </script>
 </body>
 </html>

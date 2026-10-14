@@ -1,52 +1,26 @@
 // Firebase configuration
 export const firebaseConfig = {
-    apiKey: "AIzaSyCXhUAp63QorrqYHVPhAC6SjyYONmYbQk8",
-    authDomain: "pollutionmonitoring-41560.firebaseapp.com",
-    databaseURL: "https://pollutionmonitoring-41560-default-rtdb.firebaseio.com",
-    projectId: "pollutionmonitoring-41560",
-    storageBucket: "pollutionmonitoring-41560.firebasestorage.app",
-    messagingSenderId: "415213477037",
-    appId: "1:415213477037:web:2d323bdcb3f8d062dd7a24",
-    measurementId: "G-L5HW40ZEMB"
+    apiKey: "AIzaSyAyJWZw-yYP9jiy-hhPk7OwazCTqs4-YZI",
+    authDomain: "pollutionmonitoring-4156-69176.firebaseapp.com",
+    databaseURL: "https://pollutionmonitoring-4156-69176-default-rtdb.firebaseio.com",
+    projectId: "pollutionmonitoring-4156-69176",
+    storageBucket: "pollutionmonitoring-4156-69176.firebasestorage.app",
+    messagingSenderId: "1026339122896",
+    appId: "1:1026339122896:web:5e699be8ba0a7fb60df8d5",
+    measurementId: "G-S2JRQTFMHC"
 };
 
-// Constants for CO2 thresholds
+// Thresholds for CO2 air quality (PPM)
 export const THRESHOLDS = {
-    NORMAL: 1000,  // PPM
-    MODERATE: 2000 // PPM
+    NORMAL: 1000,    // PPM (Good/Healthy)
+    MODERATE: 2000,  // PPM (Moderate / Caution)
+    CRITICAL: 2500   // PPM (High / Hazardous)
 };
 
-// Google Maps configuration
+// Map configuration (Default Bangalore coordinates)
 export const MAP_CONFIG = {
-    center: { lat: 12.9716, lng: 77.5946 }, // Bangalore coordinates
-    zoom: 12,
-    mapTypeId: 'roadmap'
-};
-
-// Chart.js configuration
-export const CHART_CONFIG = {
-    type: 'line',
-    options: {
-        animation: false,
-        scales: {
-            y: {
-                beginAtZero: true,
-                title: {
-                    display: true,
-                    text: 'CO₂ (PPM)'
-                }
-            },
-            x: {
-                title: {
-                    display: true,
-                    text: 'Time'
-                }
-            }
-        },
-        plugins: {
-            legend: {
-                display: false
-            }
-        }
-    }
+    center: [12.9716, 77.5946],
+    zoom: 13,
+    tileLayer: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
 };
