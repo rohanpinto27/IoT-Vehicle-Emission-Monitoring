@@ -74,14 +74,24 @@ async function fetchLiveData() {
         ]);
 
         if (vehiclesRes.status === 401 || !vehiclesRes.ok) {
-            console.warn(`[Firebase] HTTP ${vehiclesRes.status} Unauthorized / Access Restricted. Utilizing Demo Fixture.`);
-            showSystemBanner("warning", "Firebase Realtime Database access is restricted (HTTP 401). Switched to Alva's Institute Demo Fixture.");
+            const errDetail = (vehiclesRes.status === 401)
+                ? "access is restricted (HTTP 401)"
+                : `server returned HTTP ${vehiclesRes.status}`;
+            console.warn(`[Firebase] HTTP ${vehiclesRes.status} Error. Switched to Demo Fixture.`);
+            showSystemBanner("warning", `Firebase Realtime Database ${errDetail}. Switched to simulated telemetry fixture (Mijar, Moodbidri).`);
             applyTelemetryPayload(DEMO_FIXTURE.vehicles, DEMO_FIXTURE.alerts, true);
             return;
         }
 
         const vData = await vehiclesRes.json();
         const aData = alertsRes.ok ? await alertsRes.json() : {};
+
+        if (vData && vData.error) {
+            console.warn(`[Firebase] RTDB Error: ${vData.error}`);
+            showSystemBanner("warning", `Firebase Realtime Database error: ${vData.error}. Switched to simulated telemetry fixture (Mijar, Moodbidri).`);
+            applyTelemetryPayload(DEMO_FIXTURE.vehicles, DEMO_FIXTURE.alerts, true);
+            return;
+        }
 
         if (vData && typeof vData === 'object' && Object.keys(vData).length > 0) {
             showSystemBanner("live", "Connected to Live Firebase Cloud Stream. Receiving hardware telemetry.");
@@ -93,8 +103,37 @@ async function fetchLiveData() {
         }
     } catch (err) {
         console.warn("[CityFleet] Network/CORS error reaching Firebase:", err);
-        showSystemBanner("warning", "Unable to reach Firebase cloud. Operating in Alva's Institute Demo Simulation mode.");
+        showSystemBanner("warning", "Unable to reach Firebase cloud. Operating in simulated telemetry mode (Mijar, Moodbidri).");
         applyTelemetryPayload(DEMO_FIXTURE.vehicles, DEMO_FIXTURE.alerts, true);
+    }
+}
+
+let currentIsSimulated = false;
+let initialMapCentered = false;
+
+function updateHeaderStatus(isSimulated) {
+    currentIsSimulated = Boolean(isSimulated);
+    const pill = document.getElementById("systemLivePill");
+    const dot = document.getElementById("systemLiveDot");
+    const text = document.getElementById("systemLiveText");
+    const demoBtn = document.getElementById("toggleDemoModeBtn");
+
+    if (currentIsSimulated) {
+        if (pill) pill.className = "live-pill demo-pill";
+        if (dot) dot.className = "demo-dot";
+        if (text) text.textContent = "Demo Mode (Fixture)";
+        if (demoBtn) {
+            demoBtn.textContent = "⚡ Mode: Demo Fixture";
+            demoBtn.className = "btn btn-secondary";
+        }
+    } else {
+        if (pill) pill.className = "live-pill";
+        if (dot) dot.className = "pulse-dot";
+        if (text) text.textContent = "Live Cloud Stream";
+        if (demoBtn) {
+            demoBtn.textContent = "☁️ Mode: Live Cloud";
+            demoBtn.className = "btn btn-primary";
+        }
     }
 }
 
@@ -102,18 +141,24 @@ function applyTelemetryPayload(vehicles, alerts, isSimulated) {
     fleetData = vehicles || {};
     alertsData = alerts || {};
     lastPacketTimestamp = Date.now();
+    currentIsSimulated = Boolean(isSimulated);
 
-    renderFleetList(fleetData);
+    updateHeaderStatus(currentIsSimulated);
+    renderFleetList(fleetData, currentIsSimulated);
     renderKpis(fleetData);
-    renderMapTelemetry(fleetData);
+    renderMapTelemetry(fleetData, currentIsSimulated);
 
     if (!selectedVehicle || !fleetData[selectedVehicle]) {
         selectedVehicle = Object.keys(fleetData)[0] || "KA01-5522";
     }
 
     if (fleetData[selectedVehicle]) {
-        renderSelectedVehicleTelemetry(fleetData[selectedVehicle], selectedVehicle);
-        pushChartTelemetry(fleetData[selectedVehicle]);
+        renderSelectedVehicleTelemetry(fleetData[selectedVehicle], selectedVehicle, currentIsSimulated);
+        pushChartTelemetry(fleetData[selectedVehicle], selectedVehicle);
+        if (!initialMapCentered && map) {
+            centerVehicleOnMap(fleetData[selectedVehicle]);
+            initialMapCentered = true;
+        }
     }
 
     renderAlerts(alertsData);
@@ -170,7 +215,27 @@ function initLeafletMap() {
     }
 }
 
-function renderMapTelemetry(vehicles) {
+/**
+ * Returns a clean, professional location label for vehicles without exposing
+ * internal or implementation-oriented labels.
+ */
+export function getCleanLocationLabel(v) {
+    if (v.gps_valid === true && v.location_source === "gps") {
+        return "Live GPS Fix";
+    }
+    const label = v.location_label || "";
+    if (v.location_source === "demo_fallback" || 
+        label.includes("AIET") || 
+        label.includes("Demo") || 
+        label.includes("Indoor") ||
+        !label ||
+        (v.latitude && Math.abs(Number(v.latitude) - 13.0236) < 0.005)) {
+        return "Mijar, Moodbidri";
+    }
+    return label;
+}
+
+function renderMapTelemetry(vehicles, isSimulated = false) {
     if (!map) return;
 
     const heatPoints = [];
@@ -191,9 +256,15 @@ function renderMapTelemetry(vehicles) {
 
         const aqi = getAqiStatus(ppm);
         const isLiveGps = (v.gps_valid === true && v.location_source === "gps");
+        const cleanLoc = getCleanLocationLabel(v);
         const locationTag = isLiveGps 
             ? `<span class="gps-pill gps-live">📡 Live GPS Fix</span>` 
-            : `<span class="gps-pill gps-demo">🏢 Demo Fallback (AIET Mijar)</span>`;
+            : `<span class="gps-pill gps-demo">📍 ${cleanLoc}</span>`;
+
+        const isNodeSimulated = isSimulated || Boolean(v.is_simulated);
+        const sourcePill = isNodeSimulated
+            ? `<span class="gps-pill gps-demo" style="background:#f3e8ff; color:#7e22ce; border-color:#e9d5ff;">🧪 Demo Fixture</span>`
+            : `<span class="gps-pill gps-live">🟢 Live Cloud Stream</span>`;
 
         const popupContent = `
             <div style="font-family:'Plus Jakarta Sans',sans-serif; min-width:180px; padding:4px;">
@@ -202,10 +273,11 @@ function renderMapTelemetry(vehicles) {
                     <span class="status-badge status-${aqi.class}">${aqi.label}</span>
                 </div>
                 <div style="font-size:12px; color:#475569; line-height:1.6;">
+                    <strong>Source:</strong> ${sourcePill}<br>
                     <strong>CO₂ Air Quality:</strong> ${ppm} PPM<br>
                     <strong>Temperature:</strong> ${v.temperature != null ? Number(v.temperature).toFixed(1) + '°C' : '--'}<br>
                     <strong>Humidity:</strong> ${v.humidity != null ? Math.round(v.humidity) + '%' : '--'}<br>
-                    <strong>GPS Source:</strong> ${locationTag}
+                    <strong>Location:</strong> ${locationTag}
                 </div>
             </div>
         `;
@@ -324,8 +396,29 @@ function initChart() {
     }
 }
 
-function pushChartTelemetry(v) {
+let currentChartVehicle = null;
+let lastChartPacketKey = null;
+
+function pushChartTelemetry(v, vehicleId = selectedVehicle) {
     if (!v || !chart) return;
+
+    // Reset rolling chart history if selected vehicle changed
+    if (currentChartVehicle !== vehicleId) {
+        currentChartVehicle = vehicleId;
+        lastChartPacketKey = null;
+        chartHistory.labels = [];
+        chartHistory.co2 = [];
+        chartHistory.temp = [];
+        chartHistory.humidity = [];
+    }
+
+    // Packet identifier combining timestamp and primary metric values
+    const packetKey = `${v.timestamp || v.last_seen || ''}_${v.co2_ppm}_${v.temperature}_${v.humidity}_${v.raw_adc}`;
+    if (lastChartPacketKey === packetKey) {
+        // Telemetry has not changed since last push; do not add duplicate chart point
+        return;
+    }
+    lastChartPacketKey = packetKey;
 
     let timeLabel = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     if (v.timestamp && typeof v.timestamp === "number" && v.timestamp > 1700000000000) {
@@ -376,7 +469,7 @@ function updateChartDisplay() {
 /* -------------------------------------------------------------------------- */
 /* Fleet & Telemetry Rendering                                                */
 /* -------------------------------------------------------------------------- */
-function renderFleetList(vehicles) {
+function renderFleetList(vehicles, isSimulated = false) {
     const list = document.getElementById("vehicleList");
     if (!list) return;
     list.innerHTML = "";
@@ -387,13 +480,16 @@ function renderFleetList(vehicles) {
     ids.forEach(id => {
         const v = vehicles[id];
         const aqi = getAqiStatus(v.co2_ppm || 0);
-        const freshness = getDeviceFreshness(v);
+        const freshness = getDeviceFreshness(v, isSimulated);
         if (freshness.state === "live") onlineCount++;
 
         const isLiveGps = (v.gps_valid === true && v.location_source === "gps");
+        const cleanLoc = getCleanLocationLabel(v);
         const gpsBadge = isLiveGps
             ? `<span class="gps-pill gps-live" style="font-size:10px; padding:1px 6px;">GPS</span>`
-            : `<span class="gps-pill gps-demo" style="font-size:10px; padding:1px 6px;">DEMO</span>`;
+            : `<span class="gps-pill gps-demo" style="font-size:10px; padding:1px 6px;">${cleanLoc}</span>`;
+
+        const freshnessColor = (freshness.state === "demo") ? "#a855f7" : (freshness.state === "live" ? "#10b981" : (freshness.state === "stale" ? "#f59e0b" : "#ef4444"));
 
         const li = document.createElement("li");
         li.className = `vehicle-item ${id === selectedVehicle ? 'active' : ''}`;
@@ -407,14 +503,15 @@ function renderFleetList(vehicles) {
             </div>
             <div style="text-align:right;">
                 <span class="status-badge status-${aqi.class}">${aqi.label}</span>
-                <div style="font-size:10px; color:#64748b; margin-top:3px;">${freshness.label}</div>
+                <div style="font-size:10px; color:${freshnessColor}; margin-top:3px; font-weight:700;">${freshness.label}</div>
             </div>
         `;
 
         li.onclick = () => {
             selectedVehicle = id;
-            renderFleetList(vehicles);
-            renderSelectedVehicleTelemetry(vehicles[id], id);
+            renderFleetList(vehicles, isSimulated);
+            renderSelectedVehicleTelemetry(vehicles[id], id, isSimulated);
+            pushChartTelemetry(vehicles[id], id);
             centerVehicleOnMap(vehicles[id]);
         };
 
@@ -423,7 +520,11 @@ function renderFleetList(vehicles) {
 
     const fleetBadge = document.getElementById("fleetBadge");
     if (fleetBadge) {
-        fleetBadge.textContent = `${onlineCount} / ${ids.length} Online`;
+        if (isSimulated) {
+            fleetBadge.textContent = `${ids.length} Demo Nodes`;
+        } else {
+            fleetBadge.textContent = `${onlineCount} / ${ids.length} Online`;
+        }
     }
 }
 
@@ -460,23 +561,35 @@ function renderKpis(vehicles) {
         statusSub.style.color = avgStatus.color;
     }
 
-    if (latestTemp != null) {
-        const kpiTemp = document.getElementById("kpiTemp");
-        if (kpiTemp) kpiTemp.innerHTML = `${Number(latestTemp).toFixed(1)} <small>°C</small>`;
+    const kpiTemp = document.getElementById("kpiTemp");
+    if (kpiTemp) {
+        kpiTemp.innerHTML = latestTemp != null ? `${Number(latestTemp).toFixed(1)} <small>°C</small>` : `-- <small>°C</small>`;
     }
-    if (latestHumidity != null) {
-        const kpiHumidity = document.getElementById("kpiHumidity");
-        if (kpiHumidity) kpiHumidity.innerHTML = `${Math.round(Number(latestHumidity))} <small>%</small>`;
+    const kpiHumidity = document.getElementById("kpiHumidity");
+    if (kpiHumidity) {
+        kpiHumidity.innerHTML = latestHumidity != null ? `${Math.round(Number(latestHumidity))} <small>%</small>` : `-- <small>%</small>`;
     }
 }
 
-function renderSelectedVehicleTelemetry(v, id) {
+function renderSelectedVehicleTelemetry(v, id, isSimulated = false) {
     const ppm = v.co2_ppm || 0;
     const aqi = getAqiStatus(ppm);
-    const freshness = getDeviceFreshness(v);
+    const freshness = getDeviceFreshness(v, isSimulated);
+    const isNodeSimulated = isSimulated || Boolean(v.is_simulated);
 
     const vehNum = document.getElementById("vehicleNumber");
     if (vehNum) vehNum.textContent = id;
+
+    const srcBadge = document.getElementById("telemetrySourceBadge");
+    if (srcBadge) {
+        if (isNodeSimulated) {
+            srcBadge.className = "freshness-badge freshness-demo";
+            srcBadge.textContent = "🧪 DEMO FIXTURE";
+        } else {
+            srcBadge.className = "freshness-badge freshness-live";
+            srcBadge.textContent = "🟢 LIVE ESP32";
+        }
+    }
 
     const co2Lvl = document.getElementById("co2Level");
     if (co2Lvl) co2Lvl.textContent = ppm;
@@ -498,10 +611,14 @@ function renderSelectedVehicleTelemetry(v, id) {
     if (rawAdcElem) rawAdcElem.textContent = v.raw_adc != null ? `ADC: ${v.raw_adc}` : 'ADC: N/A';
 
     // GPS Details & Coordinates
-    const lat = v.latitude ? Number(v.latitude).toFixed(4) : "13.0236";
-    const lng = v.longitude ? Number(v.longitude).toFixed(4) : "74.9676";
+    const latVal = (v.latitude != null && !isNaN(v.latitude) && Number(v.latitude) !== 0) 
+        ? Number(v.latitude) 
+        : DEMO_LOCATION.center[0];
+    const lngVal = (v.longitude != null && !isNaN(v.longitude) && Number(v.longitude) !== 0) 
+        ? Number(v.longitude) 
+        : DEMO_LOCATION.center[1];
     const gpsCoord = document.getElementById("gpsCoordinates");
-    if (gpsCoord) gpsCoord.textContent = `Lat: ${lat} | Lng: ${lng}`;
+    if (gpsCoord) gpsCoord.textContent = `Lat: ${latVal.toFixed(6)} | Lng: ${lngVal.toFixed(6)}`;
 
     // GPS Status Banner
     const isLiveGps = (v.gps_valid === true && v.location_source === "gps");
@@ -510,12 +627,15 @@ function renderSelectedVehicleTelemetry(v, id) {
         if (isLiveGps) {
             gpsSourceElem.className = "gps-pill gps-live";
             gpsSourceElem.innerHTML = "📡 LIVE GPS";
-        } else if (v.location_source === "demo_fallback") {
-            gpsSourceElem.className = "gps-pill gps-demo";
-            gpsSourceElem.innerHTML = "🏢 DEMO LOCATION (AIET)";
         } else {
-            gpsSourceElem.className = "gps-pill gps-none";
-            gpsSourceElem.innerHTML = "⚠️ NO GPS FIX";
+            const cleanLoc = getCleanLocationLabel(v);
+            if (cleanLoc) {
+                gpsSourceElem.className = "gps-pill gps-demo";
+                gpsSourceElem.innerHTML = `📍 ${cleanLoc}`;
+            } else {
+                gpsSourceElem.className = "gps-pill gps-none";
+                gpsSourceElem.innerHTML = "⚠️ NO GPS FIX";
+            }
         }
     }
 
@@ -674,10 +794,9 @@ function setupUIControls() {
     // Demo Mode toggle
     document.getElementById("toggleDemoModeBtn")?.addEventListener("click", () => {
         isDemoSimulation = !isDemoSimulation;
-        const btn = document.getElementById("toggleDemoModeBtn");
-        if (btn) {
-            btn.textContent = isDemoSimulation ? "⚡ Mode: Demo Simulation" : "☁️ Mode: Live Cloud";
-            btn.className = isDemoSimulation ? "btn btn-secondary" : "btn btn-primary";
+        updateHeaderStatus(isDemoSimulation);
+        if (isDemoSimulation) {
+            showSystemBanner("info", "Operating in simulated telemetry mode (Mijar, Moodbidri). Showing simulated test fixture.");
         }
         fetchLiveData();
     });
@@ -735,7 +854,11 @@ function startHeartbeatTimer() {
     }, 1000);
 }
 
-function getDeviceFreshness(v) {
+function getDeviceFreshness(v, isSimulated = false) {
+    if (isSimulated || v.is_simulated) {
+        return { label: "DEMO FIXTURE", state: "demo" };
+    }
+
     const ts = v.last_seen || v.timestamp;
     if (!ts || typeof ts !== "number" || ts < 1700000000000) {
         return { label: "ONLINE (Uptime)", state: "live" };

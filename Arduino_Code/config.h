@@ -7,24 +7,25 @@
  * Central configuration file for ESP32, MQ-135, DHT11, NEO-6M GPS & Firebase.
  * ============================================================================== */
 
-// Optional: include private secrets if present
+// Optional: include private secrets if present (secrets.h is gitignored)
 #if __has_include("secrets.h")
   #include "secrets.h"
-#else
-  // Fallback defaults for Wi-Fi and Firebase (replace with your credentials in secrets.h)
-  #ifndef WIFI_SSID
-    #define WIFI_SSID        "YOUR_WIFI_SSID"
-  #endif
-  #ifndef WIFI_PASSWORD
-    #define WIFI_PASSWORD    "YOUR_WIFI_PASSWORD"
-  #endif
-  #ifndef FIREBASE_HOST
-    #define FIREBASE_HOST    "https://pollutionmonitoring-4156-69176-default-rtdb.firebaseio.com"
-  #endif
-  #ifndef FIREBASE_AUTH
-    #define FIREBASE_AUTH    "" // Database secret or auth token (leave empty if rules handle access)
-  #endif
 #endif
+
+// Fallback defaults for Wi-Fi and Firebase (configure your private values in secrets.h)
+#ifndef WIFI_SSID
+  #define WIFI_SSID        "Rohan"
+#endif
+#ifndef WIFI_PASSWORD
+  #define WIFI_PASSWORD    "098765432"
+#endif
+#ifndef FIREBASE_HOST
+  #define FIREBASE_HOST    "https://pollutionmonitoring-4156-69176-default-rtdb.firebaseio.com"
+#endif
+#ifndef FIREBASE_AUTH
+  #define FIREBASE_AUTH    "" // Set your private Database Secret in secrets.h
+#endif
+
 
 // ==========================================
 // 1. Vehicle / Node Identification
@@ -56,8 +57,7 @@
 #define ENABLE_DEMO_GPS_FALLBACK true
 
 // Coordinates for Alva's Institute of Engineering and Technology (AIET)
-// Shobhavana Campus, Mijar, Moodbidri, Mangalore, Karnataka 574225, India
-#define DEMO_LOCATION_NAME   "AIET Mijar, Moodbidri (Indoor Demo)"
+#define DEMO_LOCATION_NAME   "Mijar, Moodbidri"
 #define DEMO_LATITUDE        13.023600
 #define DEMO_LONGITUDE       74.967600
 
@@ -67,7 +67,7 @@
 // MQ-135 Model: Rs = ((3.3V - Vout) / Vout) * RL
 // CO2 curve power model: PPM = A * (Rs / R0) ^ B
 #define MQ135_RL_OHMS        10000.0   // 10k load resistor on typical breakout boards
-#define MQ135_R0_CLEAN_AIR   10000.0   // Baseline resistance in clean air (calibrate per sensor)
+#define MQ135_R0_CLEAN_AIR   10000.0   // Baseline placeholder (uncalibrated uses clean-air reference; set custom value if chamber calibrated)
 #define MQ135_CURVE_A        116.6020682
 #define MQ135_CURVE_B        -2.769034857
 
@@ -79,7 +79,7 @@
 // ==========================================
 // 5. Timing, NTP & Alert Rate-Limiting
 // ==========================================
-#define SEND_INTERVAL_MS     3000      // Transmit telemetry every 3000ms (3 seconds)
+#define SEND_INTERVAL_MS     10000     // Transmit telemetry every 10000ms (10 seconds)
 #define ALERT_COOLDOWN_MS    60000     // 60-second cooldown between alerts for continuous breach
 #define HTTP_TIMEOUT_MS      4000      // 4-second HTTP timeout for Firebase REST calls
 

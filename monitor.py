@@ -43,11 +43,11 @@ DEMO_FIXTURE = {
             "temperature": 28.2,
             "humidity": 64.0,
             "dht_valid": True,
-            "latitude": 13.0236,
-            "longitude": 74.9676,
+            "latitude": 13.023600,
+            "longitude": 74.967600,
             "gps_valid": False,
             "location_source": "demo_fallback",
-            "location_label": "AIET Mijar, Moodbidri (Demo)",
+            "location_label": "Mijar, Moodbidri",
             "emission_per_km": 4.10,
             "total_emission": 28.5,
             "status": "Normal",
@@ -173,7 +173,7 @@ def display_dashboard(data, source_type="Firebase Cloud"):
     current_time = time.strftime("%Y-%m-%d %H:%M:%S")
     print(f" {GRAY}Telemetry Source:{RESET} {CYAN}{source_type}{RESET}  |  {GRAY}Timestamp:{RESET} {WHITE}{current_time}{RESET}")
     print(f" {GRAY}Dashboard Web UI:{RESET} {BLUE}http://localhost:5000{RESET}")
-    print(f" {GRAY}Ref Location:{RESET}     {WHITE}Alva's Institute of Engg & Tech (AIET), Mijar, Moodbidri{RESET}\n")
+    print(f" {GRAY}Station Location:{RESET} {WHITE}Mijar, Moodbidri{RESET}\n")
 
     if not data or "error" in data:
         print(f" {YELLOW}⚠️ Data Source Notice:{RESET} {data.get('error', 'No telemetry received')}")
@@ -197,7 +197,7 @@ def display_dashboard(data, source_type="Firebase Cloud"):
             badge, color = get_aqi_badge(ppm)
 
             is_live_gps = (v.get("gps_valid") is True and v.get("location_source") == "gps")
-            loc_label = f"{GREEN}LIVE GPS{RESET}" if is_live_gps else f"{YELLOW}AIET DEMO{RESET}"
+            loc_label = f"{GREEN}LIVE GPS{RESET}" if is_live_gps else f"{CYAN}Mijar{RESET}"
 
             print(f"│ {BOLD}{vid:<11}{RESET} │ {color}{ppm:<9}{RESET} │ {WHITE}{temp:<7}{RESET} │ {CYAN}{humidity:<9}{RESET} │ {badge:<25} │ {loc_label:<22} │")
 
@@ -211,12 +211,14 @@ def display_dashboard(data, source_type="Firebase Cloud"):
         raw_adc = node.get("raw_adc", "--")
         emission_rate = node.get("emission_per_km", "--")
         total_emission = node.get("total_emission", "--")
-        lat = node.get("latitude", "13.0236")
-        lng = node.get("longitude", "74.9676")
+        lat = node.get("latitude", "13.023600")
+        lng = node.get("longitude", "74.967600")
         temp = node.get("temperature", "--")
         humidity = node.get("humidity", "--")
         loc_src = node.get("location_source", "demo_fallback")
-        loc_desc = node.get("location_label", "AIET Mijar, Moodbidri (Demo Fallback)")
+        loc_desc = node.get("location_label", "Mijar, Moodbidri")
+        if "AIET" in loc_desc or "Demo" in loc_desc:
+            loc_desc = "Mijar, Moodbidri"
 
         print(f"{BOLD}┌── 📡 HARDWARE NODE DETAILED TELEMETRY ({focus_id}) ─────────────────────┐{RESET}")
         print(f"│  • {BOLD}Air Quality (MQ-135):{RESET}      {co2} PPM CO₂ (Raw ADC: {raw_adc})")

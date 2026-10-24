@@ -39,9 +39,9 @@
             </div>
 
             <div class="status-center">
-                <div class="live-pill">
-                    <span class="pulse-dot"></span>
-                    <span>System Online</span>
+                <div class="live-pill" id="systemLivePill">
+                    <span class="pulse-dot" id="systemLiveDot"></span>
+                    <span id="systemLiveText">Connecting...</span>
                 </div>
                 <div class="sync-ticker" id="lastSyncTimer">Updated: Just now</div>
             </div>
@@ -64,7 +64,7 @@
                 Connecting to Firebase Realtime Database cloud stream...
             </div>
             <div class="banner-actions">
-                <small style="opacity: 0.85;">Ref: Alva's Institute of Engg & Tech (AIET), Mijar, Moodbidri</small>
+                <small style="opacity: 0.85;">Station: Mijar, Moodbidri</small>
             </div>
         </div>
 
@@ -142,7 +142,10 @@
                 <div class="card">
                     <div class="card-title-bar">
                         <div>
-                            <h2 id="vehicleNumber">KA01-5522</h2>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <h2 id="vehicleNumber">KA01-5522</h2>
+                                <span id="telemetrySourceBadge" class="freshness-badge freshness-live">LIVE STREAM</span>
+                            </div>
                             <p>Hardware Telemetry Node Details</p>
                         </div>
                         <div id="vehicleStatusBadge" class="status-badge status-normal">Normal</div>
@@ -183,11 +186,11 @@
                         </div>
                         <div class="tele-stat">
                             <span class="tele-lbl">GPS Status</span>
-                            <span id="gpsSourceBadge" class="gps-pill gps-demo">🏢 AIET DEMO</span>
+                            <span id="gpsSourceBadge" class="gps-pill gps-demo">📍 Mijar, Moodbidri</span>
                         </div>
                         <div class="tele-stat span-2">
                             <span class="tele-lbl">Coordinates</span>
-                            <span class="tele-val mono" id="gpsCoordinates">Lat: 13.0236 | Lng: 74.9676</span>
+                            <span class="tele-val mono" id="gpsCoordinates">Lat: 13.023600 | Lng: 74.967600</span>
                         </div>
                     </div>
                 </div>
@@ -220,7 +223,7 @@
                     <div class="card-title-bar">
                         <div>
                             <h2>Fleet Geospatial Map & Pollution Heatmap</h2>
-                            <p>Indoor Demonstration: Alva's Institute of Engg & Tech (AIET), Moodbidri</p>
+                            <p>Fleet Location: Mijar, Moodbidri</p>
                         </div>
                         <button id="recenterMapBtn" class="btn btn-sm btn-secondary">🎯 Recenter</button>
                     </div>
@@ -265,7 +268,7 @@
             <p>
                 <strong>CityFleet IoT Pollution Monitoring System</strong> &bull; 
                 Hardware: ESP32 + MQ-135 + DHT11 + NEO-6M GPS &bull; 
-                Demonstration Location: Alva's Institute of Engineering & Technology, Moodbidri &bull; 
+                Location: Mijar, Moodbidri &bull; 
                 Cloud: Firebase Realtime Database
             </p>
         </footer>

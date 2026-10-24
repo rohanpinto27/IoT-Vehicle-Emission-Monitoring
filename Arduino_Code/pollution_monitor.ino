@@ -3,7 +3,12 @@
  * Project: CityFleet IoT Pollution & Environmental Monitoring System
  * Target Hardware: ESP32-WROOM-32
  * Sensors: MQ-135 (Gas), DHT11 (Temp/Hum), NEO-6M (GPS)
- * Cloud Backend: Firebase Realtime Database
+ * Cloud Backend: Google Firebase Realtime Database
+ * ==============================================================================
+ * Standalone Consolidated Firmware:
+ * All Wi-Fi, Firebase, pin assignments, thresholds, and calibration settings
+ * are defined directly in this file. No external header files (config.h/secrets.h)
+ * are required.
  * ==============================================================================
  */
 
@@ -15,9 +20,70 @@
 #include <ArduinoJson.h>
 #include <time.h>
 
-#include "config.h"
+// ==============================================================================
+// 1. Wi-Fi Access Point Credentials
+// ==============================================================================
+#define WIFI_SSID              "Rohan"
+#define WIFI_PASSWORD          "098765432"
 
+// ==============================================================================
+// 2. Google Firebase Realtime Database Configuration
+// ==============================================================================
+#define FIREBASE_HOST          "https://pollutionmonitoring-4156-69176-default-rtdb.firebaseio.com"
+#define FIREBASE_AUTH          "p3TIa3LJsekyl7uSorerohHrijf97UVjQMHkwR5k"
+#define VEHICLE_ID             "KA01-5522"
+
+// ==============================================================================
+// 3. Hardware Pin Assignments (ESP32-WROOM-32)
+// ==============================================================================
+// MQ-135 Gas Sensor (Must use an ADC1 pin: GPIO 32-39 to avoid Wi-Fi conflicts)
+#define MQ135_ANALOG_PIN       34
+
+// DHT11 Temperature & Relative Humidity Sensor
+#define DHTPIN                 4
+#define DHTTYPE                DHT11
+
+// NEO-6M GPS Module (HardwareSerial 2)
+#define GPS_RX_PIN             26  // ESP32 RX2 (GPIO 26) <- NEO-6M TX
+#define GPS_TX_PIN             27  // ESP32 TX2 (GPIO 27) -> NEO-6M RX
+#define GPS_BAUD               9600
+
+// ==============================================================================
+// 4. Indoor GPS & Demonstration Fallback
+// ==============================================================================
+// When testing indoors where satellite signal is unavailable, fallback is used.
+#define ENABLE_DEMO_GPS_FALLBACK true
+#define DEMO_LOCATION_NAME     "Mijar, Moodbidri"
+#define DEMO_LATITUDE          13.023600
+#define DEMO_LONGITUDE         74.967600
+
+// ==============================================================================
+// 5. MQ-135 Calibration Parameters & AQI Thresholds
+// ==============================================================================
+#define MQ135_RL_OHMS          10000.0       // 10k load resistor on typical breakout boards
+#define MQ135_R0_CLEAN_AIR     10000.0       // Baseline reference placeholder
+#define MQ135_CURVE_A          116.6020682   // Power-law curve coefficient A
+#define MQ135_CURVE_B          -2.769034857  // Power-law curve coefficient B
+
+#define THRESHOLD_NORMAL       1000          // Good / Healthy air (PPM)
+#define THRESHOLD_MODERATE     2000          // Moderate / Caution level (PPM)
+#define THRESHOLD_CRITICAL     2500          // High / Hazardous level (PPM)
+
+// ==============================================================================
+// 6. Timing, Alert Rate-Limiting & SNTP Clock Settings
+// ==============================================================================
+#define SEND_INTERVAL_MS       10000         // Telemetry transmission interval (10 seconds)
+#define ALERT_COOLDOWN_MS      60000         // 60-second cooldown between alerts for continuous breach
+#define HTTP_TIMEOUT_MS        4000          // 4-second HTTP timeout for Firebase REST calls
+
+#define NTP_SERVER_1           "pool.ntp.org"
+#define NTP_SERVER_2           "time.google.com"
+#define GMT_OFFSET_SEC         19800         // IST: UTC + 5:30 (5.5 * 3600 = 19800 seconds)
+#define DAYLIGHT_OFFSET_SEC    0
+
+// ==============================================================================
 // Hardware Objects
+// ==============================================================================
 DHT dht(DHTPIN, DHTTYPE);
 TinyGPSPlus gps;
 HardwareSerial gpsSerial(2);
@@ -38,7 +104,6 @@ bool ntpConfigured = false;
 // ==============================================================================
 uint64_t getEpochTimestampMs(bool &isSynced) {
   time_t now;
-  struct tm timeinfo;
   if (time(&now) > 1700000000) { // Valid time after Nov 2023
     isSynced = true;
     return ((uint64_t)now * 1000ULL) + (millis() % 1000);
@@ -50,24 +115,46 @@ uint64_t getEpochTimestampMs(bool &isSynced) {
 // ==============================================================================
 // Helper: MQ-135 Gas Sensor Reading & Power-Law Approximation
 // ==============================================================================
-float readMQ135PPM(int &rawADC, float &sensorVoltage) {
+float readMQ135PPM(int &rawADC, float &sensorVoltage, float &Rs, float &ratio, float &ppm_raw) {
   rawADC = analogRead(MQ135_ANALOG_PIN);
-  sensorVoltage = (rawADC / 4095.0) * 3.3;
+  sensorVoltage = (rawADC / 4095.0f) * 3.3f;
 
   // Protect against divide-by-zero or short-circuits
-  if (sensorVoltage <= 0.05) sensorVoltage = 0.05;
-  if (sensorVoltage >= 3.25) sensorVoltage = 3.25;
+  if (sensorVoltage <= 0.05f) sensorVoltage = 0.05f;
+  if (sensorVoltage >= 3.25f) sensorVoltage = 3.25f;
 
   // Calculate sensor resistance: Rs = ((Vc - Vout) / Vout) * RL
-  float Rs = ((3.3 - sensorVoltage) / sensorVoltage) * MQ135_RL_OHMS;
+  Rs = ((3.3f - sensorVoltage) / sensorVoltage) * MQ135_RL_OHMS;
+
+  // Clean-air baseline reference for uncalibrated sensor operation:
+  // In the power curve (PPM = A * (Rs/R0)^B), clean air (~400 PPM background CO2)
+  // corresponds to a ratio of (400 / A)^(1/B) ≈ 0.641.
+  // Establishing an uncalibrated fresh-air baseline reference (R0 = Rs_baseline / 0.641)
+  // allows PPM estimates to dynamically track real sensor resistance fluctuations.
+  static float mq135_baseline_rs = 0.0f;
+  if (mq135_baseline_rs <= 0.0f) {
+    mq135_baseline_rs = Rs;
+  } else if (Rs > mq135_baseline_rs) {
+    mq135_baseline_rs = (mq135_baseline_rs * 0.95f) + (Rs * 0.05f);
+  }
+
+  float r0;
+  if (MQ135_R0_CLEAN_AIR > 0.0f && MQ135_R0_CLEAN_AIR != 10000.0f) {
+    r0 = MQ135_R0_CLEAN_AIR;
+  } else {
+    float cleanAirRatio = pow(400.0f / MQ135_CURVE_A, 1.0f / MQ135_CURVE_B);
+    r0 = mq135_baseline_rs / cleanAirRatio;
+  }
 
   // Power-law curve approximation for CO2 equivalent: PPM = A * (Rs / R0) ^ B
-  float ratio = Rs / MQ135_R0_CLEAN_AIR;
-  float ppm = MQ135_CURVE_A * pow(ratio, MQ135_CURVE_B);
+  ratio = Rs / r0;
+  ppm_raw = MQ135_CURVE_A * pow(ratio, MQ135_CURVE_B);
+
+  float ppm = ppm_raw;
 
   // Bound within reasonable atmospheric and sensor measurement bounds
-  if (ppm < 350.0) ppm = 350.0;
-  if (ppm > 5000.0) ppm = 5000.0;
+  if (ppm < 350.0f) ppm = 350.0f;
+  if (ppm > 5000.0f) ppm = 5000.0f;
 
   return ppm;
 }
@@ -105,12 +192,16 @@ bool sendTelemetryToFirebase(String jsonPayload) {
   bool success = false;
 
   if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_NO_CONTENT) {
-    Serial.printf("[Firebase] Telemetry synced (HTTP %d)\n", httpCode);
+    Serial.printf("[Firebase] Telemetry synced successfully (HTTP %d)\n", httpCode);
     success = true;
+  } else if (httpCode == 401) {
+    Serial.printf("[Firebase AUTH FAILURE] HTTP 401 Unauthorized! Token rejected or rules locked: %s\n", http.getString().c_str());
+  } else if (httpCode == 404) {
+    Serial.printf("[Firebase PATH ERROR] HTTP 404 Not Found! Check database URL: %s\n", http.getString().c_str());
   } else if (httpCode > 0) {
-    Serial.printf("[Firebase] Server returned HTTP %d: %s\n", httpCode, http.getString().c_str());
+    Serial.printf("[Firebase ERROR] Server returned HTTP %d: %s\n", httpCode, http.getString().c_str());
   } else {
-    Serial.printf("[Firebase] Connection failed: %s\n", http.errorToString(httpCode).c_str());
+    Serial.printf("[Firebase NETWORK ERROR] Connection failed: %s\n", http.errorToString(httpCode).c_str());
   }
 
   http.end();
@@ -157,14 +248,16 @@ void checkAndSendAlert(String vehicleId, float ppm, float lat, float lng, String
   http.begin(url);
   http.setTimeout(HTTP_TIMEOUT_MS);
   http.addHeader("Content-Type", "application/json");
-
   int httpCode = http.POST(alertPayload);
+
   if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_NO_CONTENT) {
-    Serial.printf("[Alert] Incident logged (HTTP %d): %s | %d PPM\n", httpCode, status.c_str(), (int)ppm);
+    Serial.printf("[Alert] Incident logged successfully (HTTP %d): %s | %d PPM\n", httpCode, status.c_str(), (int)ppm);
     lastAlertStatus = status;
     lastAlertTime = millis();
+  } else if (httpCode == 401) {
+    Serial.printf("[Alert AUTH FAILURE] HTTP 401 Unauthorized! Alert rejected by Firebase: %s\n", http.getString().c_str());
   } else {
-    Serial.printf("[Alert] Failed to log incident (HTTP %d)\n", httpCode);
+    Serial.printf("[Alert ERROR] Failed to log incident (HTTP %d): %s\n", httpCode, http.getString().c_str());
   }
 
   http.end();
@@ -235,7 +328,10 @@ void loop() {
     // A. Read MQ-135 Air Quality Sensor
     int rawADC = 0;
     float sensorVoltage = 0.0;
-    float co2_ppm = readMQ135PPM(rawADC, sensorVoltage);
+    float Rs = 0.0;
+    float ratio = 0.0;
+    float ppm_raw = 0.0;
+    float co2_ppm = readMQ135PPM(rawADC, sensorVoltage, Rs, ratio, ppm_raw);
     String status = getStatusTier(co2_ppm);
 
     // B. Read DHT11 Temperature & Humidity
@@ -311,10 +407,16 @@ void loop() {
     Serial.println("\n-------------------------------------------------------");
     Serial.printf("[Telemetry] Node: %s | CO2: %d PPM (ADC: %d) | Status: %s\n",
                   VEHICLE_ID, (int)co2_ppm, rawADC, status.c_str());
+    Serial.printf("[MQ-135 Diagnostic] Raw ADC: %d | Vout: %.3f V | Rs: %.1f Ohm | Rs/R0: %.3f | Raw PPM: %.2f | Final PPM: %d\n",
+                  rawADC, sensorVoltage, Rs, ratio, ppm_raw, (int)co2_ppm);
     if (dht_valid) {
-      Serial.printf("[Climate] Temp: %.1f °C | Humidity: %.1f %%\n", temperature, humidity);
+      Serial.printf("[DHT11 Diagnostic] Pin: GPIO %d | Sensor: DHT11 | Temp: %.1f °C | Humidity: %.1f %% | Valid: YES\n",
+                    DHTPIN, temperature, humidity);
     } else {
-      Serial.println("[Climate] DHT11 sensor read failed/unavailable.");
+      Serial.printf("[DHT11 Diagnostic] Pin: GPIO %d | Sensor: DHT11 | Temp: %s | Humidity: %s | Valid: NO (NaN or out of bounds)\n",
+                    DHTPIN,
+                    isnan(temperature) ? "NaN" : String(temperature, 1).c_str(),
+                    isnan(humidity) ? "NaN" : String(humidity, 1).c_str());
     }
     Serial.printf("[Location] Source: %s | Lat: %.4f, Lng: %.4f (%s)\n",
                   location_source.c_str(), latitude, longitude, location_label.c_str());

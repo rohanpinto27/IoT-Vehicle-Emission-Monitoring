@@ -73,3 +73,26 @@ __pycache__/
 *.pyc
 Arduino_Code/secrets.h
 .env.local
+
+
+
+
+
+# Python cache & private local secrets
+__pycache__/
+*.pyc
+Arduino_Code/secrets.h
+.env.local
+
+# Other environment files
+.env.*
+!.env.example
+
+# Editor backup and temporary files
+*.swp
+*.swo
+*~
+
+# Firebase private credentials
+service-account*.json
+*-firebase-adminsdk-*.json
